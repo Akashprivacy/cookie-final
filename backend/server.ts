@@ -1,4 +1,3 @@
-
 import express, { type Request, type Response } from 'express';
 import puppeteer, { type Cookie, type Page, type Frame, type Browser } from 'puppeteer';
 import cors from 'cors';
@@ -9,14 +8,50 @@ import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo,
 dotenv.config();
 
 const app: express.Application = express();
-const port = 3001;
 
-app.use(cors());
+// GCP Cloud Run uses PORT environment variable, fallback to 3001 for local development
+const port = process.env.PORT || 3001;
+
+// CORS configuration for GCP deployment
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? [
+        // Add your production frontend URLs here
+        'https://your-frontend-service-hash-region.run.app', // Replace with your actual Cloud Run frontend URL
+        'https://your-custom-domain.com', // Replace with your custom domain if applicable
+        /\.run\.app$/, // Allow all Cloud Run domains for flexibility
+        /\.appspot\.com$/ // Allow App Engine domains
+      ]
+    : [
+        'http://localhost:3000',
+        'http://localhost:5173', // Vite dev server
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:5173'
+      ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
+
+// Health check endpoint for GCP
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Root endpoint
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({ 
+    message: 'Cookie Care API Server', 
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 if (!process.env.API_KEY) {
   console.error("FATAL ERROR: API_KEY environment variable is not set.");
-  (process as any).exit(1);
+  process.exit(1);
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -24,7 +59,6 @@ const model = "gemini-2.5-flash";
 
 // --- In-Memory Storage ---
 const templateLibrary = new Map<string, ContractTemplate>();
-
 
 const knownTrackerDomains = [
     'google-analytics.com', 'googletagmanager.com', 'analytics.google.com', 'doubleclick.net', 'googleadservices.com', 'googlesyndication.com', 'connect.facebook.net', 'facebook.com/tr', 'c.clarity.ms', 'clarity.ms', 'hotjar.com', 'hotjar.io', 'hjid.hotjar.com', 'hubspot.com', 'hs-analytics.net', 'track.hubspot.com', 'linkedin.com/px', 'ads.linkedin.com', 'twitter.com/i/ads', 'ads-twitter.com', 'bing.com/ads', 'semrush.com', 'optimizely.com', 'vwo.com', 'crazyegg.com', 'taboola.com', 'outbrain.com', 'criteo.com', 'addthis.com', 'sharethis.com', 'tiqcdn.com', // Tealium
@@ -116,7 +150,22 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
   console.log(`[SERVER] Received scan request for: ${url}`);
   let browser: Browser | null = null;
   try {
-    browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'] });
+    // GCP Cloud Run optimized Puppeteer configuration
+    browser = await puppeteer.launch({ 
+      headless: true, 
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox', 
+        '--start-maximized',
+        '--disable-dev-shm-usage', // Overcome limited resource problems
+        '--disable-gpu', // Disable GPU for Cloud Run
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows'
+      ] 
+    });
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
@@ -401,7 +450,17 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
     console.log(`[SERVER] Received vulnerability scan request for: ${url}`);
     let browser: Browser | null = null;
     try {
-        browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        browser = await puppeteer.launch({ 
+          headless: true, 
+          args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-default-browser-check'
+          ] 
+        });
         const page = await browser.newPage();
         
         const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 45000 });
@@ -822,6 +881,33 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
     }
 });
 
+// Error handling middleware
+app.use((err: Error, req: Request, res: Response, next: Function) => {
+    console.error('[SERVER] Unhandled error:', err);
+    res.status(500).json({ 
+        error: 'Internal server error', 
+        message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    });
+});
+
+// 404 handler
+app.use('*', (req: Request, res: Response) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('[SERVER] SIGTERM received, shutting down gracefully...');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('[SERVER] SIGINT received, shutting down gracefully...');
+    process.exit(0);
+});
+
 app.listen(port, () => {
-    console.log(`[SERVER] Backend server running at http://localhost:${port}`);
+    console.log(`[SERVER] Backend server running on port ${port}`);
+    console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[SERVER] Health check available at: /health`);
 });
