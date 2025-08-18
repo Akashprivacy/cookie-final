@@ -1,6 +1,6 @@
 FROM node:18-bullseye-slim
 
-# Install Chrome dependencies and system packages
+# Install Chrome/system dependencies if you really need Puppeteer-like features
 RUN apt-get update && apt-get install -y \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files first (for better caching)
+# Copy package files
 COPY package*.json ./
 COPY backend/package*.json ./backend/
 
@@ -37,21 +37,21 @@ COPY backend/package*.json ./backend/
 RUN npm install
 RUN cd backend && npm install
 
-# Install additional frontend dependencies
+# Install any extra frontend libs
 RUN npm install jspdf html2canvas && \
     npm install --save-dev @types/html2canvas
-    
-# Copy all source code
+
+# Copy all source
 COPY . .
 
-# Build backend
-RUN cd backend && npm run build
+# Build frontend (Vite → dist/)
+RUN npm run build
 
-# Create start script for Docker
-RUN echo '#!/bin/bash\necho "Starting Cookie Care in Docker..."\necho "Starting backend..."\ncd backend && npm run dev &\necho "Waiting for backend..."\nsleep 8\necho "Starting frontend..."\nnpm run dev -- --port $PORT --host 0.0.0.0\nwait' > docker-start.sh && chmod +x docker-start.sh
+# Environment variable for Cloud Run
+ENV PORT=8080
 
-# Expose ports
-EXPOSE 3001 5174
+# Switch to backend directory
+WORKDIR /app/backend
 
-# Default command
-CMD ["./docker-start.sh"]
+# Start backend in production mode
+CMD ["npm", "start"]
