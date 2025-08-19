@@ -158,7 +158,7 @@ async function handleConsent(page: Page, action: 'accept' | 'reject'): Promise<b
   return false;
 }
 
-const collectPageData = async (page: Page): Promise<{ cookies: Cookie[], trackers: Set<string> }> => {
+const collectPageData = async (page: Page, scanTimeout: number): Promise<{ cookies: Cookie[], trackers: Set<string> }> => {
     const trackers = new Set<string>();
     const requestListener = (request: any) => {
         const reqUrl = request.url();
@@ -170,12 +170,12 @@ const collectPageData = async (page: Page): Promise<{ cookies: Cookie[], tracker
     try {
         // FASTER: Use 'domcontentloaded' instead of 'networkidle2'
         await page.reload({ 
-            waitUntil: 'domcontentloaded', // Much faster than 'networkidle2'
-            timeout: SCAN_TIMEOUT 
+            waitUntil: 'domcontentloaded',
+            timeout: scanTimeout 
         });
         
-        // FASTER: Wait only 1 second instead of letting network settle
-        await page.waitForTimeout(1000);
+        // FIXED: Use setTimeout wrapped in Promise instead of waitForTimeout
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         const cookies = await page.cookies();
         
@@ -275,7 +275,6 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     await page.setViewport({ width: 1920, height: 1080 });
 
     const MAX_PAGES_TO_SCAN = 1;
-    const SCAN_TIMEOUT = 15000;
     const urlsToVisit: string[] = [url];
     const visitedUrls = new Set<string>();
     const allCookieMap = new Map<string, any>();
@@ -341,7 +340,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
                 processItems(allTrackerMap, Array.from(postAcceptTrackers), 'post-acceptance', false);
                 console.log(`[SCAN] Post-acceptance: ${postAcceptCookies.length} cookies, ${postAcceptTrackers.size} trackers.`);
             } else { // Simplified scan for subsequent pages
-                const { cookies, trackers } = await collectPageData(page);
+                const { cookies, trackers } = await collectPageData(page, SCAN_TIMEOUT);
                 processItems(allCookieMap, cookies, 'post-acceptance', true);
                 processItems(allTrackerMap, Array.from(trackers), 'post-acceptance', false);
                 console.log(`[SCAN] Subsequent page: ${cookies.length} cookies, ${trackers.size} trackers.`);
@@ -630,7 +629,8 @@ Return ONLY the valid JSON object.`;
 app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string }>, res: Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
-
+    const SCAN_TIMEOUT = 15000;
+  
     console.log(`[SERVER] Received vulnerability scan request for: ${url}`);
     let browser: Browser | null = null;
     try {
