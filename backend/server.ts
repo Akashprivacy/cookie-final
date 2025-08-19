@@ -7,6 +7,7 @@ import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo,
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,13 +43,21 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// ADD THIS IMMEDIATELY AFTER HEALTH CHECK:
+// Debug routes endpoint - ADD THIS BEFORE OTHER ROUTES
 app.get('/debug-routes', (req: Request, res: Response) => {
-  res.json({ message: 'Routes are being registered!', timestamp: new Date().toISOString() });
+  res.json({ 
+    message: "Routes are being registered!", 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    dirname: __dirname
+  });
 });
 
+// Serve static files in production - MOVE THIS AFTER BASIC ROUTES BUT BEFORE API ROUTES
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  const staticPath = path.join(__dirname, '..', 'public');
+  console.log(`[SERVER] Serving static files from: ${staticPath}`);
+  app.use(express.static(staticPath));
 }
 
 if (!process.env.API_KEY) {
@@ -183,11 +192,21 @@ app.get('/debug-files', (req: Request, res: Response) => {
   }
 });
 
-// 🔍 Debug middleware:
+// 🔍 Debug middleware for API routes:
 app.use('/api/*', (req: Request, res: Response, next: Function) => {
   console.log('[API DEBUG] Request:', req.method, req.path, req.url);
   console.log('[API DEBUG] Body:', req.body);
   next();
+});
+
+// ADD A SIMPLE TEST ROUTE
+app.get('/api/test', (req: Request, res: Response) => {
+  res.json({ 
+    message: 'API is working!', 
+    timestamp: new Date().toISOString(),
+    path: req.path,
+    url: req.url
+  });
 });
 
 app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
@@ -927,30 +946,34 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
     }
 });
 
-// And change the SPA fallback:
+// SPA fallback for production - MOVE THIS BEFORE ERROR HANDLERS
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req: Request, res: Response) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
-      return res.status(404).json({ error: 'Endpoint not found' });
+    // Don't serve index.html for API routes
+    if (req.path.startsWith('/api/') || req.path.startsWith('/health') || req.path.startsWith('/debug-')) {
+      return res.status(404).json({ error: 'API endpoint not found' });
     }
-    res.sendFile(path.join(__dirname, '..', 'public', 'index.html')); // ← Go up from dist to backend, then to public
+    
+    const indexPath = path.join(__dirname, '..', 'public', 'index.html');
+    console.log(`[SERVER] Serving SPA for ${req.path} from ${indexPath}`);
+    
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.status(404).json({ error: 'Frontend not found', path: indexPath });
+    }
   });
 }
 
-// REPLACE your error handling middleware with this:
+// Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: Function) => {
     console.error('[SERVER] Unhandled error:', err);
     console.error('[SERVER] Error stack:', err.stack);
     res.status(500).json({ 
         error: 'Internal server error', 
-        message: err.message,           // ← Show real error
-        stack: err.stack               // ← Show stack trace
+        message: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
-});
-
-// 404 handler - MUST be LAST
-app.use('*', (req: Request, res: Response) => {
-    res.status(404).json({ error: 'Endpoint not found' });
 });
 
 // Graceful shutdown
@@ -968,4 +991,6 @@ app.listen(port, () => {
     console.log(`[SERVER] Backend server running on port ${port}`);
     console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`[SERVER] Health check available at: /health`);
+    console.log(`[SERVER] Debug routes available at: /debug-routes`);
+    console.log(`[SERVER] Static files served from: ${path.join(__dirname, '..', 'public')}`);
 });
