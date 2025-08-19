@@ -6,6 +6,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo, ComplianceStatus, type LegalAnalysisResult, type LegalPerspective, type VulnerabilityScanResult, type VulnerabilityCategory, type GeneratedContract, ContractTemplate } from './types.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -143,8 +144,6 @@ interface ApiScanRequestBody { url: string; }
 // Add this route to see what files exist:
 app.get('/debug-files', (req: Request, res: Response) => {
   try {
-    import fs from 'fs';
-    
     // Check multiple possible locations
     const locations = [
       path.join(__dirname, 'public'),
