@@ -167,12 +167,27 @@ const collectPageData = async (page: Page): Promise<{ cookies: Cookie[], tracker
     };
     page.on('request', requestListener);
     
-    await page.reload({ waitUntil: 'networkidle2' });
-    
-    const cookies = await page.cookies();
-    
-    page.off('request', requestListener); // Clean up listener
-    return { cookies, trackers };
+    try {
+        // FASTER: Use 'domcontentloaded' instead of 'networkidle2'
+        await page.reload({ 
+            waitUntil: 'domcontentloaded', // Much faster than 'networkidle2'
+            timeout: SCAN_TIMEOUT 
+        });
+        
+        // FASTER: Wait only 1 second instead of letting network settle
+        await page.waitForTimeout(1000);
+        
+        const cookies = await page.cookies();
+        
+        page.off('request', requestListener);
+        return { cookies, trackers };
+    } catch (error) {
+        page.off('request', requestListener);
+        console.warn(`[SCAN] Error collecting page data:`, error instanceof Error ? error.message : error);
+        // Return partial data instead of failing completely
+        const cookies = await page.cookies().catch(() => []);
+        return { cookies, trackers };
+    }
 }
 
 interface ApiScanRequestBody { url: string; }
@@ -259,7 +274,8 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
 
-    const MAX_PAGES_TO_SCAN = 5;
+    const MAX_PAGES_TO_SCAN = 1;
+    const SCAN_TIMEOUT = 15000;
     const urlsToVisit: string[] = [url];
     const visitedUrls = new Set<string>();
     const allCookieMap = new Map<string, any>();
@@ -364,23 +380,24 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     ];
 
     if (allItemsToAnalyze.length === 0) {
-        return res.json({
-            cookies: [], trackers: [], screenshotBase64,
-            consentBannerDetected: consentBannerFound,
-            pagesScannedCount: visitedUrls.size,
-            compliance: {
-                gdpr: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
-                ccpa: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
-            }
-        });
-    }
+    return res.json({
+        cookies: [], trackers: [], screenshotBase64,
+        consentBannerDetected: consentBannerFound,
+        pagesScannedCount: visitedUrls.size,
+        compliance: {
+            gdpr: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
+            ccpa: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
+        }
+    });
+}
 
     const BATCH_SIZE = 40;
     const batches = [];
     for (let i = 0; i < allItemsToAnalyze.length; i += BATCH_SIZE) {
-        batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
+    batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
     }
     console.log(`[AI] Splitting analysis into ${batches.length} batch(es) of size ~${BATCH_SIZE}.`);
+
 
     const analyzeBatch = async (batch: any[], batchNum: number, maxRetries = 2): Promise<any[]> => {
   const itemsForBatchAnalysis = batch.map(item => {
@@ -476,11 +493,60 @@ ${JSON.stringify(itemsForBatchAnalysis, null, 2)}`;
 };
 
     const aggregatedAnalysis: any[] = [];
-    for (const [index, batch] of batches.entries()) {
+for (const [index, batch] of batches.entries()) {
+    try {
+        console.log(`[AI] Processing batch ${index + 1}/${batches.length}...`);
         const batchAnalysis = await analyzeBatch(batch, index);
         aggregatedAnalysis.push(...batchAnalysis);
+        
+        // Short delay between batches to prevent rate limiting
+        if (index < batches.length - 1) {
+            await new Promise(res => setTimeout(res, 500));
+        }
+    } catch (error) {
+        console.error(`[AI] Batch ${index + 1} failed, continuing with next batch:`, error);
+        // Continue processing other batches instead of failing entirely
+        continue;
     }
-    console.log('[AI] All batches analyzed successfully.');
+}
+
+// If no successful analysis, provide fallback
+if (aggregatedAnalysis.length === 0) {
+    console.warn('[AI] All AI batches failed, providing basic analysis');
+    return res.json({
+        cookies: Array.from(allCookieMap.values()).map(c => ({
+            key: `${c.data.name}|${c.data.domain}|${c.data.path}`,
+            name: c.data.name,
+            provider: c.data.domain,
+            expiry: getHumanReadableExpiry(c.data),
+            party: c.data.domain.startsWith('.') ? 'Third' : 'First',
+            isHttpOnly: c.data.httpOnly,
+            isSecure: c.data.secure,
+            complianceStatus: 'Unknown',
+            category: 'Unknown',
+            purpose: 'Analysis failed - manual review required',
+        })),
+        trackers: Array.from(allTrackerMap.values()).map(t => {
+            const [provider, trackerUrl] = t.data.split('|');
+            return {
+                key: t.data,
+                url: trackerUrl,
+                provider,
+                category: 'Unknown',
+                complianceStatus: 'Unknown',
+            };
+        }),
+        screenshotBase64,
+        consentBannerDetected: consentBannerFound,
+        pagesScannedCount: visitedUrls.size,
+        compliance: {
+            gdpr: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
+            ccpa: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
+        }
+    });
+}
+
+console.log('[AI] All batches analyzed successfully.');
 
     const violationSummary = {
         preConsentViolations: aggregatedAnalysis.filter(a => a.complianceStatus === 'Pre-Consent Violation').length,
@@ -569,16 +635,28 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
     let browser: Browser | null = null;
     try {
         browser = await puppeteer.launch({ 
-          headless: true, 
-          args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-default-browser-check'
-          ] 
-        });
+    headless: true, 
+    args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
+        // ADD THESE FOR SPEED:
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images', // Skip loading images
+        '--disable-web-security',
+        '--disable-features=TranslateUI'
+    ],
+    // SMALLER VIEWPORT FOR SPEED:
+    defaultViewport: { width: 1280, height: 720 },
+    timeout: 10000 // Faster browser startup
+});
         const page = await browser.newPage();
         
         const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
