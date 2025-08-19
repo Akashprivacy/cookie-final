@@ -44,13 +44,26 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // Debug routes endpoint - ADD THIS BEFORE OTHER ROUTES
-app.get('/debug-routes', (req: Request, res: Response) => {
-  res.json({ 
-    message: "Routes are being registered!", 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    dirname: __dirname
+app.get('/debug-routes', (req, res) => {
+  const routes = [];
+  app._router.stack.forEach((middleware) => {
+    if (middleware.route) { // Route registered directly on the app
+      routes.push({
+        method: Object.keys(middleware.route.methods).join(', ').toUpperCase(),
+        path: middleware.route.path
+      });
+    } else if (middleware.name === 'router') { // Router middleware 
+      middleware.handle.stack.forEach((handler) => {
+        if (handler.route) {
+          routes.push({
+            method: Object.keys(handler.route.methods).join(', ').toUpperCase(),
+            path: handler.route.path
+          });
+        }
+      });
+    }
   });
+  res.json({ message: "Routes are being registered!", environment: process.env.NODE_ENV || 'development', routes });
 });
 
 // Serve static files in production - MOVE THIS AFTER BASIC ROUTES BUT BEFORE API ROUTES
