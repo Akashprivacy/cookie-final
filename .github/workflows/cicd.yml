@@ -6,16 +6,16 @@ on:
       - main
 
 env:
-  PROJECT_ID: 'my-project'           # <-- Your GCP Project ID
-  REGION: 'us-central1'              # <-- Cloud Run region
-  SERVICE: 'my-service'              # <-- Cloud Run service name
-  AR_REGION: 'us-central1'           # <-- Artifact Registry region
-  REPO_NAME: 'my-artifact-repo'      # <-- Artifact Registry repo name
+  PROJECT_ID: 'my-project'           # <-- UPDATE: Your GCP Project ID
+  REGION: 'us-central1'              # <-- UPDATE: Your preferred region
+  SERVICE: 'cookie-care-service'     # <-- UPDATE: Your desired service name
+  AR_REGION: 'us-central1'           # <-- Should match REGION
+  REPO_NAME: 'cookie-care-repo'      # <-- UPDATE: Your Artifact Registry repo name
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,12 +36,13 @@ jobs:
           IMAGE_BASE="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}"
           IMAGE_SHA="${IMAGE_BASE}:${{ github.sha }}"
           IMAGE_LATEST="${IMAGE_BASE}:latest"
-
+          
           echo "Building and pushing $IMAGE_SHA and $IMAGE_LATEST..."
+          
           docker build -t "$IMAGE_SHA" -t "$IMAGE_LATEST" .
           docker push "$IMAGE_SHA"
           docker push "$IMAGE_LATEST"
-
+          
           echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
           echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
 
@@ -52,25 +53,35 @@ jobs:
           gcloud run deploy ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
             --image=${IMAGE_LATEST} \
+            --platform=managed \
             --allow-unauthenticated \
+            --port=8080 \
+            --memory=2Gi \
+            --cpu=1 \
+            --timeout=300 \
+            --concurrency=80 \
+            --min-instances=0 \
+            --max-instances=10 \
+            --set-env-vars="NODE_ENV=production,PORT=8080,API_KEY=${{ secrets.API_KEY }}" \
             --quiet
 
       - name: Rollback if Deployment Fails
         if: steps.deploy.outcome == 'failure'
         run: |
           echo "❌ Deployment failed. Rolling back..."
+          
           LAST_REVISION=$(gcloud run revisions list \
             --service=${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
             --sort-by="~createTime" \
             --limit=2 \
             --format="value(metadata.name)" | tail -n1)
-
+          
           if [ -z "$LAST_REVISION" ]; then
             echo "⚠️ No previous revision found to rollback to."
             exit 1
           fi
-
+          
           echo "🔄 Rolling back to $LAST_REVISION..."
           gcloud run services update-traffic ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
@@ -79,6 +90,9 @@ jobs:
       - name: Show Service URL
         if: steps.deploy.outcome == 'success'
         run: |
-          gcloud run services describe ${{ env.SERVICE }} \
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
-            --format="value(status.url)"
+            --format="value(status.url)")
+          echo "🚀 Service deployed successfully!"
+          echo "📍 Service URL: $SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
