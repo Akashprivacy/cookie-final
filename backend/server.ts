@@ -41,7 +41,7 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Serve static files in production
+// Change this line in server.ts:
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'public')));
 }
@@ -877,14 +877,13 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
     }
 });
 
-// SPA fallback - MUST come BEFORE 404 handler
+// And change the SPA fallback:
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req: Request, res: Response) => {
-    // Skip API routes and health check
     if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
       return res.status(404).json({ error: 'Endpoint not found' });
     }
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, '..', 'index.html')); // ← Go up one directory
   });
 }
 
