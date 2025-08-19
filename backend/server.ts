@@ -19,15 +19,13 @@ const port = process.env.PORT || 3001;
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? [
-        // Allow requests from any *.run.app domain (Cloud Run)
         /\.run\.app$/,
         /\.appspot\.com$/,
-        // Add your custom domain if you have one
-        process.env.FRONTEND_URL,
-      ].filter(Boolean)
+        ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [])
+      ]
     : [
         'http://localhost:3000',
-        'http://localhost:5173', // Vite dev server
+        'http://localhost:5173',
         'http://127.0.0.1:3000',
         'http://127.0.0.1:5173'
       ],
