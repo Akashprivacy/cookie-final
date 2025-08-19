@@ -44,7 +44,7 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Change this line in server.ts:
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'public')));
+  app.use(express.static(path.join(__dirname, '..', 'public')));
 }
 
 if (!process.env.API_KEY) {
@@ -922,7 +922,7 @@ if (process.env.NODE_ENV === 'production') {
     if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
       return res.status(404).json({ error: 'Endpoint not found' });
     }
-    res.sendFile(path.join(__dirname, '..', 'index.html')); // ← Go up one directory
+    res.sendFile(path.join(__dirname, '..', 'public', 'index.html')); // ← Go up from dist to backend, then to public
   });
 }
 
