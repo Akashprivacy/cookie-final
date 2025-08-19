@@ -383,16 +383,16 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     console.log(`[AI] Splitting analysis into ${batches.length} batch(es) of size ~${BATCH_SIZE}.`);
 
     const analyzeBatch = async (batch: any[], batchNum: number, maxRetries = 2): Promise<any[]> => {
-      const itemsForBatchAnalysis = batch.map(item => {
-        if (item.type === 'cookie') {
-            const { name, domain, path } = item.data.data;
-            return { type: 'cookie', key: `${name}|${domain}|${path}`, name, provider: domain, states: Array.from(item.data.states) };
-        }
-        const [provider] = item.data.data.split('|');
-        return { type: 'tracker', key: item.data.data, provider, states: Array.from(item.data.states) };
-      });
-  
-      const batchPrompt = `You are a privacy expert categorizing web technologies. Given this batch of cookies and trackers and the states they were observed in ('pre-consent', 'post-rejection', 'post-acceptance'), provide a JSON array. For each item:
+  const itemsForBatchAnalysis = batch.map(item => {
+    if (item.type === 'cookie') {
+        const { name, domain, path } = item.data.data;
+        return { type: 'cookie', key: `${name}|${domain}|${path}`, name, provider: domain, states: Array.from(item.data.states) };
+    }
+    const [provider] = item.data.data.split('|');
+    return { type: 'tracker', key: item.data.data, provider, states: Array.from(item.data.states) };
+  });
+
+  const batchPrompt = `You are a privacy expert categorizing web technologies. Given this batch of cookies and trackers and the states they were observed in ('pre-consent', 'post-rejection', 'post-acceptance'), provide a JSON array. For each item:
 - key: The original key.
 - category: Categorize into 'Necessary', 'Functional', 'Analytics', 'Marketing', 'Unknown'. Be strict: only essential-for-operation items are 'Necessary'.
 - purpose: (For cookies only) A very brief, one-sentence description of the cookie's likely function. Limit to 15 words. If not a cookie, return an empty string.
@@ -401,50 +401,79 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     - If state includes 'pre-consent' AND category is NOT 'Necessary': 'Pre-Consent Violation'.
     - If state includes 'post-rejection' AND category is NOT 'Necessary': 'Post-Rejection Violation'.
     - Otherwise: 'Compliant'.
+
+CRITICAL: Your response must be ONLY a valid JSON array, nothing else. Do not add any explanatory text.
+
 Input Data:
-${JSON.stringify(itemsForBatchAnalysis, null, 2)}
-Return ONLY the valid JSON array of results.`;
-      
-      const batchResponseSchema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                key: { type: Type.STRING },
-                category: { type: Type.STRING },
-                purpose: { type: Type.STRING },
-                complianceStatus: { type: Type.STRING }
+${JSON.stringify(itemsForBatchAnalysis, null, 2)}`;
+  
+  const batchResponseSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            key: { type: Type.STRING },
+            category: { type: Type.STRING },
+            purpose: { type: Type.STRING },
+            complianceStatus: { type: Type.STRING }
+        },
+        required: ["key", "category", "purpose", "complianceStatus"]
+    }
+  };
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+        console.log(`[AI] Analyzing batch ${batchNum + 1}/${batches.length} (Attempt ${attempt + 1})...`);
+        const result = await ai.models.generateContent({
+            model, contents: [{ parts: [{ text: batchPrompt }] }],
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: batchResponseSchema,
             },
-            required: ["key", "category", "purpose", "complianceStatus"]
+        });
+        
+        let resultText = result.text;
+        if (!resultText) {
+            throw new Error(`Gemini API returned an empty response for analysis batch #${batchNum + 1}.`);
         }
-      };
-      
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+
+        // FIX: Clean the response text to extract only JSON
+        resultText = resultText.trim();
+        
+        // Find the first '[' and last ']' to extract JSON array
+        const firstBracket = resultText.indexOf('[');
+        const lastBracket = resultText.lastIndexOf(']');
+        
+        if (firstBracket === -1 || lastBracket === -1 || firstBracket >= lastBracket) {
+            throw new Error(`No valid JSON array found in AI response`);
+        }
+        
+        // Extract only the JSON part
+        const jsonPart = resultText.substring(firstBracket, lastBracket + 1);
+        
         try {
-            console.log(`[AI] Analyzing batch ${batchNum + 1}/${batches.length} (Attempt ${attempt + 1})...`);
-            const result = await ai.models.generateContent({
-                model, contents: [{ parts: [{ text: batchPrompt }] }],
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: batchResponseSchema,
-                },
-            });
-            const resultText = result.text;
-            if (!resultText) {
-                throw new Error(`Gemini API returned an empty response for analysis batch #${batchNum + 1}.`);
+            const parsedResult = JSON.parse(jsonPart);
+            if (!Array.isArray(parsedResult)) {
+                throw new Error(`Response is not an array`);
             }
-            return JSON.parse(resultText);
-        } catch(error) {
-            console.warn(`[AI] Attempt ${attempt + 1}/${maxRetries + 1} failed for batch ${batchNum + 1}.`, error instanceof Error ? error.message : error);
-            if (attempt === maxRetries) {
-                console.error(`[AI] Batch ${batchNum + 1} failed after ${maxRetries + 1} attempts.`);
-                throw error;
-            }
-            await new Promise(res => setTimeout(res, 1500 * (attempt + 1)));
+            return parsedResult;
+        } catch (parseError) {
+            console.error(`[AI] JSON Parse Error for batch ${batchNum + 1}:`, parseError);
+            console.error(`[AI] Cleaned text:`, jsonPart.substring(0, 200));
+            throw parseError;
         }
-      }
-      throw new Error(`Exhausted all retries for batch ${batchNum + 1}`);
-    };
+        
+    } catch(error) {
+        console.warn(`[AI] Attempt ${attempt + 1}/${maxRetries + 1} failed for batch ${batchNum + 1}.`, error instanceof Error ? error.message : error);
+        if (attempt === maxRetries) {
+            console.error(`[AI] Batch ${batchNum + 1} failed after ${maxRetries + 1} attempts.`);
+            throw error;
+        }
+        await new Promise(res => setTimeout(res, 1500 * (attempt + 1)));
+    }
+  }
+  throw new Error(`Exhausted all retries for batch ${batchNum + 1}`);
+};
 
     const aggregatedAnalysis: any[] = [];
     for (const [index, batch] of batches.entries()) {
