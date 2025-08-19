@@ -1,6 +1,6 @@
 FROM node:18-bullseye-slim
 
-# Install Chrome/system dependencies if you really need Puppeteer-like features
+# Install Chrome/system dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files for both frontend (root) and backend
 COPY package*.json ./
 COPY backend/package*.json ./backend/
 
@@ -37,21 +37,38 @@ COPY backend/package*.json ./backend/
 RUN npm install
 RUN cd backend && npm install
 
-# Install any extra frontend libs
-RUN npm install jspdf html2canvas && \
-    npm install --save-dev @types/html2canvas
+# Install additional frontend libraries
+RUN npm install jspdf html2canvas
 
-# Copy all source
-COPY . .
+# Copy frontend files (your actual structure)
+COPY index.html index.tsx App.tsx types.ts ./
+COPY vite.config.ts tailwind.config.js postcss.config.js tsconfig.json ./
+COPY components/ ./components/
+COPY styles/ ./styles/
+COPY services/ ./services/
 
-# Build frontend (Vite → dist/)
+# Copy backend files
+COPY backend/ ./backend/
+
+# Build frontend using Vite (builds from root where your files are)
 RUN npm run build
 
-# Environment variable for Cloud Run
+# Copy built frontend to backend's public directory
+RUN mkdir -p /app/backend/public && \
+    cp -r /app/dist/* /app/backend/public/
+
+# Build backend TypeScript
+RUN cd backend && npm run build
+
+# Set environment variables
+ENV NODE_ENV=production
 ENV PORT=8080
 
-# Switch to backend directory
+# Switch to backend directory for runtime
 WORKDIR /app/backend
 
-# Start backend in production mode
+# Expose port
+EXPOSE 8080
+
+# Start the compiled backend server
 CMD ["npm", "start"]
