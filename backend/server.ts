@@ -43,17 +43,18 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Debug routes endpoint - ADD THIS BEFORE OTHER ROUTES
-app.get('/debug-routes', (req, res) => {
-  const routes = [];
-  app._router.stack.forEach((middleware) => {
-    if (middleware.route) { // Route registered directly on the app
+app.get('/debug-routes', (req: Request, res: Response) => {
+  type RouteInfo = { method: string; path: string };
+  const routes: RouteInfo[] = [];
+
+  (app._router.stack as any[]).forEach((middleware: any) => {
+    if (middleware.route) { // Route is directly registered on app
       routes.push({
         method: Object.keys(middleware.route.methods).join(', ').toUpperCase(),
         path: middleware.route.path
       });
-    } else if (middleware.name === 'router') { // Router middleware 
-      middleware.handle.stack.forEach((handler) => {
+    } else if (middleware.name === 'router' && middleware.handle?.stack) { // Router middleware 
+      (middleware.handle.stack as any[]).forEach((handler: any) => {
         if (handler.route) {
           routes.push({
             method: Object.keys(handler.route.methods).join(', ').toUpperCase(),
@@ -63,8 +64,17 @@ app.get('/debug-routes', (req, res) => {
       });
     }
   });
-  res.json({ message: "Routes are being registered!", environment: process.env.NODE_ENV || 'development', routes });
+
+  res.json({
+    message: "Routes are being registered!",
+    environment: process.env.NODE_ENV || 'development',
+    cwd: process.cwd(),
+    filename: __filename,
+    dirname: __dirname,
+    routes
+  });
 });
+
 
 // Serve static files in production - MOVE THIS AFTER BASIC ROUTES BUT BEFORE API ROUTES
 if (process.env.NODE_ENV === 'production') {
