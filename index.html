@@ -87,55 +87,14 @@
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] antialiased transition-colors duration-300">
     <div id="root"></div>
     <script>
-      // Dynamic API URL configuration for GCP deployment
-      function getApiUrl() {
-        // Development: Frontend (5173) → Backend (3001)
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-          if (window.location.port === '5173') {
-            return 'http://localhost:3001'; // Vite dev → Backend dev
-          }
-          return 'http://localhost:3001'; // Fallback for any localhost
-        }
-        
-        // Production: Both served from same Cloud Run service
-        return window.location.origin;
-      }
-
-      // Set the global API URL
-      window.API_BASE_URL = getApiUrl();
-
-      // Development debugging
-      if (window.location.hostname === 'localhost') {
-        console.log('🔧 Development mode - API Base URL:', window.API_BASE_URL);
-      }
-        
-        // For GCP Cloud Run or App Engine deployments
-        // Use the same origin as the frontend, but with /api prefix if using a unified deployment
-        // Or use environment-specific URLs
-        const protocol = window.location.protocol;
-        const hostname = window.location.hostname;
-        
-        // Option 1: If backend is on same domain with /api prefix
-        // return `${protocol}//${hostname}/api`;
-        
-        // Option 2: If backend is on different subdomain (recommended for microservices)
-        // Replace 'your-backend-service' with your actual GCP service name
-        if (hostname.includes('run.app') || hostname.includes('appspot.com')) {
-          // For Cloud Run: replace with your backend service URL
-          return `${protocol}//your-backend-service-${hostname.split('-').slice(-2).join('-')}`;
-        }
-        
-        // Option 3: Environment variable approach (requires build-time injection)
-        // This would be replaced during the build process
-        return window.REACT_APP_API_URL || `${protocol}//${hostname.replace('www.', 'api.')}/api`;
-      }
-      
-      // Set the global API URL
-      window.API_BASE_URL = getApiUrl();
-      
-      // Log for debugging (remove in production)
-      console.log('API Base URL:', window.API_BASE_URL);
-    </script>
+  // Always use origin (same host as the frontend) for API endpoints
+  function getApiUrl() {
+    // For Cloud Run or App Engine, use current location's origin (https://yourservice-xxxxxx.a.run.app)
+    return window.location.origin;
+  }
+  window.API_BASE_URL = getApiUrl();
+  console.log('API Base URL:', window.API_BASE_URL);
+</script>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
