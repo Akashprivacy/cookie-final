@@ -552,7 +552,7 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
         });
         const page = await browser.newPage();
         
-        const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 45000 });
+        const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
         if (!response) throw new Error('Could not get a response from the URL.');
 
         const headers = response.headers();
