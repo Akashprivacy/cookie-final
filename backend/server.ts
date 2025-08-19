@@ -140,6 +140,46 @@ const collectPageData = async (page: Page): Promise<{ cookies: Cookie[], tracker
 
 interface ApiScanRequestBody { url: string; }
 
+// Add this route to see what files exist:
+app.get('/debug-files', (req: Request, res: Response) => {
+  try {
+    import fs from 'fs';
+    
+    // Check multiple possible locations
+    const locations = [
+      path.join(__dirname, 'public'),
+      path.join(__dirname, '..'),
+      path.join(__dirname, '../dist'),
+      '/app',
+      '/app/dist',
+      '/app/backend/public'
+    ];
+    
+    const results: any = {
+      __dirname,
+      locations: {}
+    };
+    
+    locations.forEach(loc => {
+      try {
+        const exists = fs.existsSync(loc);
+        results.locations[loc] = {
+          exists,
+          files: exists ? fs.readdirSync(loc) : []
+        };
+      } catch (e) {
+        results.locations[loc] = { error: e instanceof Error ? e.message : 'Unknown error' };
+      }
+    });
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+  }
+});
+
 app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
@@ -887,12 +927,14 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Error handling middleware
+// REPLACE your error handling middleware with this:
 app.use((err: Error, req: Request, res: Response, next: Function) => {
     console.error('[SERVER] Unhandled error:', err);
+    console.error('[SERVER] Error stack:', err.stack);
     res.status(500).json({ 
         error: 'Internal server error', 
-        message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+        message: err.message,           // ← Show real error
+        stack: err.stack               // ← Show stack trace
     });
 });
 
