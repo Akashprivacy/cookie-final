@@ -54,7 +54,7 @@ RUN npm run build
 RUN mkdir -p /app/backend/public && \
     cp -r /app/dist/* /app/backend/public/
 
-# Build backend TypeScript
+# Build backend TypeScript to dist/
 RUN cd backend && npm run build
 
 # Set environment variables
@@ -67,5 +67,5 @@ WORKDIR /app/backend
 # Expose port
 EXPOSE 8080
 
-# Start the compiled backend server
+# Start the compiled backend server (your exact start command)
 CMD ["npm", "start"]
