@@ -50,9 +50,11 @@ COPY backend/ ./backend/
 # Build frontend using Vite (builds from root where your files are)
 RUN npm run build
 
-# Copy built frontend to backend's public directory
+# Copy built frontend to backend's public directory (FIX THIS PART)
 RUN mkdir -p /app/backend/public && \
-    cp -r /app/dist/* /app/backend/public/
+    cp -r /app/dist/* /app/backend/public/ 2>/dev/null || \
+    cp -r /app/*.html /app/backend/public/ && \
+    cp -r /app/assets /app/backend/public/ 2>/dev/null || true
 
 # Build backend TypeScript to dist/
 RUN cd backend && npm run build
