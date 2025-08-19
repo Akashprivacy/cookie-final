@@ -320,14 +320,14 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
             if (visitedUrls.size === 1) {
                 console.log('[SCAN] Capturing pre-consent state...');
                 screenshotBase64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 70 });
-                const { cookies: preConsentCookies, trackers: preConsentTrackers } = await collectPageData(page);
+                const { cookies: preConsentCookies, trackers: preConsentTrackers } = await collectPageData(page, SCAN_TIMEOUT);
                 processItems(allCookieMap, preConsentCookies, 'pre-consent', true);
                 processItems(allTrackerMap, Array.from(preConsentTrackers), 'pre-consent', false);
                 console.log(`[SCAN] Pre-consent: ${preConsentCookies.length} cookies, ${preConsentTrackers.size} trackers.`);
                 
                 console.log('[SCAN] Capturing post-rejection state...');
                 consentBannerFound = await handleConsent(page, 'reject');
-                const { cookies: postRejectCookies, trackers: postRejectTrackers } = await collectPageData(page);
+                const { cookies: postRejectCookies, trackers: postRejectTrackers } = await collectPageData(page, SCAN_TIMEOUT);
                 processItems(allCookieMap, postRejectCookies, 'post-rejection', true);
                 processItems(allTrackerMap, Array.from(postRejectTrackers), 'post-rejection', false);
                 console.log(`[SCAN] Post-rejection: ${postRejectCookies.length} cookies, ${postRejectTrackers.size} trackers.`);
@@ -335,7 +335,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
                 console.log('[SCAN] Capturing post-acceptance state...');
                 await page.reload({ waitUntil: 'networkidle2' });
                 await handleConsent(page, 'accept');
-                const { cookies: postAcceptCookies, trackers: postAcceptTrackers } = await collectPageData(page);
+                const { cookies: postAcceptCookies, trackers: postAcceptTrackers } = await collectPageData(page, SCAN_TIMEOUT);
                 processItems(allCookieMap, postAcceptCookies, 'post-acceptance', true);
                 processItems(allTrackerMap, Array.from(postAcceptTrackers), 'post-acceptance', false);
                 console.log(`[SCAN] Post-acceptance: ${postAcceptCookies.length} cookies, ${postAcceptTrackers.size} trackers.`);
