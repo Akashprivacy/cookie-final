@@ -635,133 +635,99 @@ Return ONLY the valid JSON object.`;
   }
 });
 
+// SINGLE FIX: Replace your /api/scan-vulnerabilities route with this optimized version
+
 app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string }>, res: Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
-    const SCAN_TIMEOUT = 15000;
-  
+
     console.log(`[SERVER] Received vulnerability scan request for: ${url}`);
     let browser: Browser | null = null;
     try {
         browser = await puppeteer.launch({ 
-    headless: true, 
-    args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows',
-        // ADD THESE FOR SPEED:
-        '--disable-extensions',
-        '--disable-plugins',
-        '--disable-images', // Skip loading images
-        '--disable-web-security',
-        '--disable-features=TranslateUI'
-    ],
-    // SMALLER VIEWPORT FOR SPEED:
-    defaultViewport: { width: 1280, height: 720 },
-    timeout: 10000 // Faster browser startup
-});
+          headless: true, 
+          args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-default-browser-check',
+            // ADD THESE FOR SPEED:
+            '--disable-extensions',
+            '--disable-plugins',
+            '--disable-images', // Skip loading images for faster scan
+            '--disable-web-security',
+            '--disable-features=TranslateUI'
+          ],
+          defaultViewport: { width: 1280, height: 720 }, // Smaller viewport
+          timeout: 10000 // Faster startup
+        });
         const page = await browser.newPage();
         
-        const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+        // FASTER: Use domcontentloaded instead of networkidle0
+        const response = await page.goto(url, { 
+            waitUntil: 'domcontentloaded', // Changed from 'networkidle0'
+            timeout: 20000 // Reduced from 60000 to 20000
+        });
         if (!response) throw new Error('Could not get a response from the URL.');
 
         const headers = response.headers();
         const cookies = await page.cookies();
         
         const pageData = await page.evaluate(() => {
+            // FASTER: Limit data collection to essential items only
             const comments: string[] = [];
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT, null);
             let node;
-            while(node = walker.nextNode()) {
-                if (node.nodeValue) comments.push(node.nodeValue.trim());
+            let commentCount = 0;
+            while((node = walker.nextNode()) && commentCount < 10) { // Limit to 10 comments
+                if (node.nodeValue) {
+                    comments.push(node.nodeValue.trim());
+                    commentCount++;
+                }
             }
 
             const externalScripts = Array.from(document.querySelectorAll('script[src]'))
+                .slice(0, 20) // Limit to first 20 scripts
                 .map(s => s.getAttribute('src'))
                 .filter((src): src is string => !!src && (src.startsWith('http') || src.startsWith('//')));
                  
-            const metaTags = Array.from(document.querySelectorAll('meta')).map(m => ({ name: m.name, content: m.content }));
+            const metaTags = Array.from(document.querySelectorAll('meta'))
+                .slice(0, 15) // Limit to first 15 meta tags
+                .map(m => ({ name: m.name, content: m.content }));
 
             const insecureLinks = Array.from(document.querySelectorAll('a[target="_blank"]:not([rel~="noopener"]):not([rel~="noreferrer"])'))
+                .slice(0, 10) // Limit to first 10 insecure links
                 .map(a => (a as HTMLAnchorElement).href);
 
-            const forms = Array.from(document.querySelectorAll('form')).map(f => ({
-                action: f.getAttribute('action') || '',
-                method: f.getAttribute('method') || 'GET',
-                hasPasswordInput: !!f.querySelector('input[type="password"]'),
-            }));
+            const forms = Array.from(document.querySelectorAll('form'))
+                .slice(0, 5) // Limit to first 5 forms
+                .map(f => ({
+                    action: f.getAttribute('action') || '',
+                    method: f.getAttribute('method') || 'GET',
+                    hasPasswordInput: !!f.querySelector('input[type="password"]'),
+                }));
 
             return { comments, externalScripts, metaTags, insecureLinks, forms };
         });
 
-        const vulnerabilityPrompt = `
-          You are a Principal Security Consultant and Professional Auditor, tasked with producing a comprehensive, non-intrusive penetration test and security audit report for the website "${url}".
-          Your analysis must be exceptionally detailed, accurate, and reflect the standards of a top-tier cybersecurity firm. The final output must be a single, client-ready JSON object. Do not use markdown formatting in your response.
+        // SHORTER, FOCUSED PROMPT for faster AI processing
+        const vulnerabilityPrompt = `You are a security expert. Analyze this website data and provide a focused security assessment.
 
-          **Passively Collected Intelligence:**
-          *   **HTTP Headers:** ${JSON.stringify(headers, null, 2)}
-          *   **Cookies:** ${JSON.stringify(cookies.map(c => ({ name: c.name, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite })), null, 2)}
-          *   **Meta Tags:** ${JSON.stringify(pageData.metaTags, null, 2)}
-          *   **External Scripts:** ${JSON.stringify(pageData.externalScripts, null, 2)}
-          *   **HTML Comments:** ${JSON.stringify(pageData.comments, null, 2)}
-          *   **Insecure "target=_blank" Links:** ${JSON.stringify(pageData.insecureLinks, null, 2)}
-          *   **Forms:** ${JSON.stringify(pageData.forms, null, 2)}
+**Data:**
+- **Headers:** ${JSON.stringify(headers, null, 2)}
+- **Cookies:** ${JSON.stringify(cookies.map(c => ({ name: c.name, secure: c.secure, httpOnly: c.httpOnly })), null, 2)}
+- **Meta Tags:** ${JSON.stringify(pageData.metaTags, null, 2)}
+- **External Scripts:** ${JSON.stringify(pageData.externalScripts, null, 2)}
+- **Insecure Links:** ${JSON.stringify(pageData.insecureLinks, null, 2)}
 
-          **Mandatory Reporting Structure & Analysis Guidelines:**
+**Instructions:**
+Provide a JSON response with:
+1. **overallRisk**: { level: 'Critical'|'High'|'Medium'|'Low', score: 0-10, summary: brief summary }
+2. **findings**: Array of security issues found, each with: name, riskLevel, category, description, impact, evidence, remediation, references (2 refs with title/url)
 
-          **Part 1: Executive Summary (overallRisk object)**
-          *   **score:** Provide a precise Common Vulnerability Scoring System (CVSS) v3.1 equivalent score (0.0-10.0). Base this on the highest severity finding and the overall security posture. A site with critical findings (e.g., no CSP, leaking sensitive info) must score 8.0+. A well-configured site should be below 3.0.
-          *   **level:** Assign a risk level: 'Critical', 'High', 'Medium', 'Low', or 'Informational'. This must correspond to the highest risk finding.
-          *   **summary:** Write a concise, C-level executive summary. Clearly state the overall security posture, highlight the most critical risk areas, and quantify the number of high-risk findings.
-
-          **Part 2: Detailed Technical Findings (findings array)**
-          For EACH identified weakness, no matter how small, create a finding object. Be exhaustive.
-          *   **name:** Use a standardized, professional vulnerability name (e.g., "Content-Security-Policy (CSP) Header Not Implemented").
-          *   **riskLevel:** Classify the risk of the specific finding.
-          *   **category:** Use one: 'Security Headers', 'Cookie Configuration', 'Information Exposure', 'Insecure Transport', 'Software Fingerprinting', 'Frontend Security', 'Third-Party Risk', 'Best Practices'.
-          *   **description:** Provide a detailed explanation of what the vulnerability is and why it's a risk in the context of this specific website.
-          *   **impact:** Clearly articulate the potential business and technical impact of exploitation (e.g., "Successful exploitation could lead to Cross-Site Scripting (XSS) attacks, allowing an attacker to steal user session cookies, deface the website, or redirect users to malicious sites.").
-          *   **evidence:** Provide the *exact* piece of data from the "Collected Intelligence" that proves the vulnerability exists. For missing headers, state "The '[Header-Name]' header was not present in the HTTP response."
-          *   **remediation:** Offer a comprehensive and actionable remediation plan. Include best-practice code snippets, configuration examples, and specific implementation guidance. This is the most critical part of your analysis.
-          *   **references:** Provide an array of at least two authoritative references (title and URL) from sources like OWASP, MDN, or CWE for each finding.
-
-          **Comprehensive Audit Checklist (You must evaluate ALL points):**
-
-          1.  **Security Headers:**
-              *   **Content-Security-Policy:** Is it present? If so, is it strong or overly permissive (e.g., contains 'unsafe-inline' or wildcard sources)? A weak or missing CSP is a HIGH or CRITICAL risk.
-              *   **Strict-Transport-Security (HSTS):** Is it present? Does it have a long \`max-age\` and include \`includeSubDomains\`?
-              *   **X-Content-Type-Options:** Must be \`nosniff\`.
-              *   **X-Frame-Options:** Must be \`DENY\` or \`SAMEORIGIN\`. Note that \`Content-Security-Policy: frame-ancestors\` is superior.
-              *   **Permissions-Policy (formerly Feature-Policy):** Is a restrictive policy in place to prevent misuse of browser features?
-              *   **Referrer-Policy:** Is it set to a privacy-preserving value like \`strict-origin-when-cross-origin\` or \`no-referrer\`?
-              *   **COOP/COEP:** Check for \`Cross-Origin-Opener-Policy\` and \`Cross-Origin-Embedder-Policy\` to mitigate cross-origin attacks.
-
-          2.  **Information Exposure & Fingerprinting:**
-              *   **Server / X-Powered-By / X-AspNet-Version:** Are these headers exposing specific server technologies and versions? This is a finding.
-              *   **Meta 'generator' tags:** Is the specific CMS or framework version being advertised?
-              *   **HTML Comments:** Scrutinize comments for any leaked developer notes, credentials, internal paths, or commented-out code.
-
-          3.  **Cookie Security:**
-              *   Audit EVERY cookie. Any cookie without \`Secure\` (if site is HTTPS) and \`HttpOnly\` (unless needed by client-side JS) is a finding.
-              *   Check for weak \`SameSite\` policies (e.g., \`None\` without \`Secure\`). Praise use of \`Lax\` or \`Strict\`.
-              *   Note if cookies lack the \`__Host-\` or \`__Secure-\` prefix for added protection.
-
-          4.  **Frontend & Transport Security:**
-              *   **Tabnabbing:** Report all links with \`target="_blank"\` that are missing \`rel="noopener noreferrer"\`.
-              *   **Third-Party Scripts:** Analyze the list of external scripts. If there are many, create a 'Third-Party Risk' finding explaining the increased attack surface and risk of supply chain attacks (e.g., Magecart).
-              *   **Insecure Forms:** Analyze the 'forms' data. Report any form that submits to an \`http://\` action, especially if it contains a password field.
-
-          5.  **Best Practices & Further Investigation:**
-              *   If no major issues are found, still provide 'Informational' findings for hardening (e.g., 'Permissions-Policy Header Not Implemented'). If the site is already very secure, create an Informational finding praising a specific strong control, for example: "Robust Content-Security-Policy". Your goal is to always provide value.
-
-          **Final Instruction:** Your final response MUST be a single, valid JSON object and nothing else. Adhere strictly to the JSON schema provided in the API definition. Do not include any text, markdown, or commentary outside of the JSON structure.
-        `;
+Focus on: Missing security headers, insecure cookies, unsafe external scripts, and information exposure. Be concise but thorough.`;
 
         const vulnerabilitySchema = {
             type: Type.OBJECT,
