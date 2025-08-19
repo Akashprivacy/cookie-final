@@ -4,9 +4,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo, ComplianceStatus, type LegalAnalysisResult, type LegalPerspective, type VulnerabilityScanResult, type VulnerabilityCategory, type GeneratedContract, ContractTemplate } from './types.js';
-
+import path from 'path';
+import { fileURLToPath } from 'url';
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app: express.Application = express();
 
 // GCP Cloud Run uses PORT environment variable, fallback to 3001 for local development
@@ -16,12 +19,12 @@ const port = process.env.PORT || 3001;
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? [
-        // Add your production frontend URLs here
-        'https://your-frontend-service-hash-region.run.app', // Replace with your actual Cloud Run frontend URL
-        'https://your-custom-domain.com', // Replace with your custom domain if applicable
-        /\.run\.app$/, // Allow all Cloud Run domains for flexibility
-        /\.appspot\.com$/ // Allow App Engine domains
-      ]
+        // Allow requests from any *.run.app domain (Cloud Run)
+        /\.run\.app$/,
+        /\.appspot\.com$/,
+        // Add your custom domain if you have one
+        process.env.FRONTEND_URL,
+      ].filter(Boolean)
     : [
         'http://localhost:3000',
         'http://localhost:5173', // Vite dev server
@@ -39,6 +42,11 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
+
+if (process.env.NODE_ENV === 'production') {
+  // Serve static files from the public directory (built Vite output)
+  app.use(express.static(path.join(__dirname, 'public')));
+}
 
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {
@@ -905,6 +913,17 @@ process.on('SIGINT', () => {
     console.log('[SERVER] SIGINT received, shutting down gracefully...');
     process.exit(0);
 });
+
+if (process.env.NODE_ENV === 'production') {
+  // Handle React Router - serve index.html for all non-API routes
+  app.get('*', (req: Request, res: Response) => {
+    // Skip API routes and health check
+    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+      return res.status(404).json({ error: 'Endpoint not found' });
+    }
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  });
+}
 
 app.listen(port, () => {
     console.log(`[SERVER] Backend server running on port ${port}`);
