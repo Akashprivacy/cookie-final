@@ -41,19 +41,10 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  // Serve static files from the public directory (built Vite output)
   app.use(express.static(path.join(__dirname, 'public')));
 }
-
-// // Root endpoint
-// app.get('/', (req: Request, res: Response) => {
-//   res.status(200).json({ 
-//     message: 'Cookie Care API Server', 
-//     version: '1.0.0',
-//     environment: process.env.NODE_ENV || 'development'
-//   });
-// });
 
 if (!process.env.API_KEY) {
   console.error("FATAL ERROR: API_KEY environment variable is not set.");
@@ -745,7 +736,6 @@ app.delete('/api/templates/:id', (req: Request<{ id: string }>, res: Response) =
     }
 });
 
-
 // Contract Generation
 interface GenerateContractBody {
     contractType: string;
@@ -887,6 +877,17 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
     }
 });
 
+// SPA fallback - MUST come BEFORE 404 handler
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req: Request, res: Response) => {
+    // Skip API routes and health check
+    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+      return res.status(404).json({ error: 'Endpoint not found' });
+    }
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  });
+}
+
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: Function) => {
     console.error('[SERVER] Unhandled error:', err);
@@ -896,7 +897,7 @@ app.use((err: Error, req: Request, res: Response, next: Function) => {
     });
 });
 
-// 404 handler
+// 404 handler - MUST be LAST
 app.use('*', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Endpoint not found' });
 });
@@ -911,17 +912,6 @@ process.on('SIGINT', () => {
     console.log('[SERVER] SIGINT received, shutting down gracefully...');
     process.exit(0);
 });
-
-if (process.env.NODE_ENV === 'production') {
-  // Handle React Router - serve index.html for all non-API routes
-  app.get('*', (req: Request, res: Response) => {
-    // Skip API routes and health check
-    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
-      return res.status(404).json({ error: 'Endpoint not found' });
-    }
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  });
-}
 
 app.listen(port, () => {
     console.log(`[SERVER] Backend server running on port ${port}`);
