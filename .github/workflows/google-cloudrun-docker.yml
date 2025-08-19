@@ -1,0 +1,84 @@
+name: 'Build and Deploy to Cloud Run with Rollback'
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: 'my-project'           # <-- Your GCP Project ID
+  REGION: 'us-central1'              # <-- Cloud Run region
+  SERVICE: 'my-service'              # <-- Cloud Run service name
+  AR_REGION: 'us-central1'           # <-- Artifact Registry region
+  REPO_NAME: 'my-artifact-repo'      # <-- Artifact Registry repo name
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Docker Auth
+        run: gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Container
+        run: |
+          IMAGE_BASE="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}"
+          IMAGE_SHA="${IMAGE_BASE}:${{ github.sha }}"
+          IMAGE_LATEST="${IMAGE_BASE}:latest"
+
+          echo "Building and pushing $IMAGE_SHA and $IMAGE_LATEST..."
+          docker build -t "$IMAGE_SHA" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE_LATEST"
+
+          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        continue-on-error: true
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --image=${IMAGE_LATEST} \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Rollback if Deployment Fails
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "❌ Deployment failed. Rolling back..."
+          LAST_REVISION=$(gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --sort-by="~createTime" \
+            --limit=2 \
+            --format="value(metadata.name)" | tail -n1)
+
+          if [ -z "$LAST_REVISION" ]; then
+            echo "⚠️ No previous revision found to rollback to."
+            exit 1
+          fi
+
+          echo "🔄 Rolling back to $LAST_REVISION..."
+          gcloud run services update-traffic ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --to-revisions=$LAST_REVISION=100
+
+      - name: Show Service URL
+        if: steps.deploy.outcome == 'success'
+        run: |
+          gcloud run services describe ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.url)"
