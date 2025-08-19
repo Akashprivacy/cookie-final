@@ -6,10 +6,10 @@ on:
       - main
 
 env:
-  PROJECT_ID: 'rd-dpo-and-security-app'           # <-- UPDATE: Your GCP Project ID
-  REGION: 'asia-south1'              # <-- UPDATE: Your preferred region
-  SERVICE: 'cookie-care'     # <-- UPDATE: Your desired service name
-  AR_REGION: 'asia-south1'           # <-- Should match REGION
+  PROJECT_ID: 'my-project'           # <-- UPDATE: Your GCP Project ID
+  REGION: 'us-central1'              # <-- UPDATE: Your preferred region
+  SERVICE: 'cookie-care-service'     # <-- UPDATE: Your desired service name
+  AR_REGION: 'us-central1'           # <-- Should match REGION
   REPO_NAME: 'cookie-care-repo'      # <-- UPDATE: Your Artifact Registry repo name
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
             --concurrency=80 \
             --min-instances=0 \
             --max-instances=10 \
-            --set-env-vars="NODE_ENV=production,PORT=8080,API_KEY=${{ secrets.API_KEY }}" \
+            --set-env-vars="NODE_ENV=production,API_KEY=${{ secrets.API_KEY }}" \
             --quiet
 
       - name: Rollback if Deployment Fails
