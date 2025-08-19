@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { CookieCareLogo, SunIcon, MoonIcon, CheckCircleIcon, ScaleIcon, ShieldCheckIcon } from './components/Icons';
 import { CookieScannerView } from './components/CookieScannerView';
@@ -18,20 +17,21 @@ const ThemeToggle: React.FC<{ theme: string, toggleTheme: () => void }> = ({ the
 type View = 'scanner' | 'legal' | 'vulnerability';
 
 const App: React.FC = () => {
-  const [theme, setTheme] = useState('dark');
+  // Initialize theme based on system preference, no localStorage usage
+  const [theme, setTheme] = useState(() => 
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  );
   const [activeView, setActiveView] = useState<View>('scanner');
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    setTheme(savedTheme);
-    document.documentElement.classList.toggle('dark', savedTheme === 'dark');
-  }, []);
+    // Apply theme to document
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
 
   const toggleTheme = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
+    // Note: Not using localStorage here as it's not supported in this environment
   };
 
   const NavTab: React.FC<{view: View, label: string, icon: React.ReactNode}> = ({ view, label, icon }) => {
