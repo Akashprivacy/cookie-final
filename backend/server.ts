@@ -46,14 +46,14 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'public')));
 }
 
-// Root endpoint
-app.get('/', (req: Request, res: Response) => {
-  res.status(200).json({ 
-    message: 'Cookie Care API Server', 
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
+// // Root endpoint
+// app.get('/', (req: Request, res: Response) => {
+//   res.status(200).json({ 
+//     message: 'Cookie Care API Server', 
+//     version: '1.0.0',
+//     environment: process.env.NODE_ENV || 'development'
+//   });
+// });
 
 if (!process.env.API_KEY) {
   console.error("FATAL ERROR: API_KEY environment variable is not set.");
