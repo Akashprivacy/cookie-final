@@ -250,7 +250,10 @@ app.get('/api/test', (req: Request, res: Response) => {
 app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
-
+  
+  const MAX_PAGES_TO_SCAN = 1;
+  const SCAN_TIMEOUT = 15000;
+  const BATCH_SIZE = 40;
   console.log(`[SERVER] Received scan request for: ${url}`);
   let browser: Browser | null = null;
   try {
@@ -259,22 +262,28 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
       headless: true, 
       args: [
         '--no-sandbox', 
-        '--disable-setuid-sandbox', 
-        '--start-maximized',
-        '--disable-dev-shm-usage', // Overcome limited resource problems
-        '--disable-gpu', // Disable GPU for Cloud Run
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows'
-      ] 
+        '--disable-backgrounding-occluded-windows',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',
+        '--disable-web-security',
+        '--disable-features=TranslateUI'
+      ],
+      defaultViewport: { width: 1280, height: 720 },
+      timeout: 10000
     });
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
 
-    const MAX_PAGES_TO_SCAN = 1;
+    // const MAX_PAGES_TO_SCAN = 1;
     const urlsToVisit: string[] = [url];
     const visitedUrls = new Set<string>();
     const allCookieMap = new Map<string, any>();
