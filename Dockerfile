@@ -37,9 +37,6 @@ COPY backend/package*.json ./backend/
 RUN npm install
 RUN cd backend && npm install
 
-# Install additional frontend libraries
-RUN npm install jspdf html2canvas
-
 # Copy frontend files (your actual structure)
 COPY index.html index.tsx App.tsx types.ts ./
 COPY vite.config.ts tailwind.config.js postcss.config.js tsconfig.json ./
