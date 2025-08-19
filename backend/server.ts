@@ -42,6 +42,11 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// ADD THIS IMMEDIATELY AFTER HEALTH CHECK:
+app.get('/debug-routes', (req: Request, res: Response) => {
+  res.json({ message: 'Routes are being registered!', timestamp: new Date().toISOString() });
+});
+
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '..', 'public')));
 }
