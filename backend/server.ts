@@ -42,10 +42,21 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Change this line in server.ts:
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '..', 'public')));
 }
+
+// 🔍 ADD THE DEBUG MIDDLEWARE HERE:
+app.use('/api/*', (req: Request, res: Response, next: Function) => {
+  console.log('[API DEBUG] Request:', req.method, req.path, req.url);
+  console.log('[API DEBUG] Body:', req.body);
+  next();
+});
+
+// Your existing API routes:
+app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
+  console.log('[SERVER] /api/scan route hit!'); // ADD THIS LINE
+  const { url } = req.body;
 
 if (!process.env.API_KEY) {
   console.error("FATAL ERROR: API_KEY environment variable is not set.");
