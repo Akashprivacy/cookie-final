@@ -48,12 +48,12 @@ app.get('/debug-routes', (req: Request, res: Response) => {
   const routes: RouteInfo[] = [];
 
   (app._router.stack as any[]).forEach((middleware: any) => {
-    if (middleware.route) {
+    if (middleware.route) { // Route is directly registered on app
       routes.push({
         method: Object.keys(middleware.route.methods).join(', ').toUpperCase(),
         path: middleware.route.path
       });
-    } else if (middleware.name === 'router' && middleware.handle?.stack) {
+    } else if (middleware.name === 'router' && middleware.handle?.stack) { // Router middleware 
       (middleware.handle.stack as any[]).forEach((handler: any) => {
         if (handler.route) {
           routes.push({
@@ -75,7 +75,8 @@ app.get('/debug-routes', (req: Request, res: Response) => {
   });
 });
 
-// Serve static files in production
+
+// Serve static files in production - MOVE THIS AFTER BASIC ROUTES BUT BEFORE API ROUTES
 if (process.env.NODE_ENV === 'production') {
   const staticPath = path.join(__dirname, '..', 'public');
   console.log(`[SERVER] Serving static files from: ${staticPath}`);
@@ -93,62 +94,8 @@ const model = "gemini-2.5-flash";
 // --- In-Memory Storage ---
 const templateLibrary = new Map<string, ContractTemplate>();
 
-// Add debug files endpoint
-app.get('/debug-files', (req: Request, res: Response) => {
-  try {
-    const locations = [
-      path.join(__dirname, 'public'),
-      path.join(__dirname, '..'),
-      path.join(__dirname, '../dist'),
-      '/app',
-      '/app/dist',
-      '/app/backend/public'
-    ];
-    
-    const results: any = {
-      __dirname,
-      locations: {}
-    };
-    
-    locations.forEach(loc => {
-      try {
-        const exists = fs.existsSync(loc);
-        results.locations[loc] = {
-          exists,
-          files: exists ? fs.readdirSync(loc) : []
-        };
-      } catch (e) {
-        results.locations[loc] = { error: e instanceof Error ? e.message : 'Unknown error' };
-      }
-    });
-    
-    res.json(results);
-  } catch (error) {
-    res.status(500).json({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    });
-  }
-});
-
-// Debug middleware for API routes
-app.use('/api/*', (req: Request, res: Response, next: Function) => {
-  console.log('[API DEBUG] Request:', req.method, req.path, req.url);
-  console.log('[API DEBUG] Body:', req.body);
-  next();
-});
-
-// Simple test route
-app.get('/api/test', (req: Request, res: Response) => {
-  res.json({ 
-    message: 'API is working!', 
-    timestamp: new Date().toISOString(),
-    path: req.path,
-    url: req.url
-  });
-});
-
 const knownTrackerDomains = [
-    'google-analytics.com', 'googletagmanager.com', 'analytics.google.com', 'doubleclick.net', 'googleadservices.com', 'googlesyndication.com', 'connect.facebook.net', 'facebook.com/tr', 'c.clarity.ms', 'clarity.ms', 'hotjar.com', 'hotjar.io', 'hjid.hotjar.com', 'hubspot.com', 'hs-analytics.net', 'track.hubspot.com', 'linkedin.com/px', 'ads.linkedin.com', 'twitter.com/i/ads', 'ads-twitter.com', 'bing.com/ads', 'semrush.com', 'optimizely.com', 'vwo.com', 'crazyegg.com', 'taboola.com', 'outbrain.com', 'criteo.com', 'addthis.com', 'sharethis.com', 'tiqcdn.com',
+    'google-analytics.com', 'googletagmanager.com', 'analytics.google.com', 'doubleclick.net', 'googleadservices.com', 'googlesyndication.com', 'connect.facebook.net', 'facebook.com/tr', 'c.clarity.ms', 'clarity.ms', 'hotjar.com', 'hotjar.io', 'hjid.hotjar.com', 'hubspot.com', 'hs-analytics.net', 'track.hubspot.com', 'linkedin.com/px', 'ads.linkedin.com', 'twitter.com/i/ads', 'ads-twitter.com', 'bing.com/ads', 'semrush.com', 'optimizely.com', 'vwo.com', 'crazyegg.com', 'taboola.com', 'outbrain.com', 'criteo.com', 'addthis.com', 'sharethis.com', 'tiqcdn.com', // Tealium
 ];
 
 const getHumanReadableExpiry = (puppeteerCookie: Cookie): string => {
@@ -183,7 +130,7 @@ async function findAndClickButton(frame: Frame, keywords: string[]): Promise<boo
       }, text);
       if (clicked) {
         console.log(`[CONSENT] Clicked button containing: "${text}"`);
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1500)); // Wait for actions post-click
         return true;
       }
     } catch (error) {
@@ -221,13 +168,13 @@ const collectPageData = async (page: Page, scanTimeout: number): Promise<{ cooki
     page.on('request', requestListener);
     
     try {
-        // Use 'domcontentloaded' for faster loading
+        // FASTER: Use 'domcontentloaded' instead of 'networkidle2'
         await page.reload({ 
             waitUntil: 'domcontentloaded',
             timeout: scanTimeout 
         });
         
-        // Use setTimeout wrapped in Promise
+        // FIXED: Use setTimeout wrapped in Promise instead of waitForTimeout
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         const cookies = await page.cookies();
@@ -237,12 +184,68 @@ const collectPageData = async (page: Page, scanTimeout: number): Promise<{ cooki
     } catch (error) {
         page.off('request', requestListener);
         console.warn(`[SCAN] Error collecting page data:`, error instanceof Error ? error.message : error);
+        // Return partial data instead of failing completely
         const cookies = await page.cookies().catch(() => []);
         return { cookies, trackers };
     }
 }
 
 interface ApiScanRequestBody { url: string; }
+
+// Add this route to see what files exist:
+app.get('/debug-files', (req: Request, res: Response) => {
+  try {
+    // Check multiple possible locations
+    const locations = [
+      path.join(__dirname, 'public'),
+      path.join(__dirname, '..'),
+      path.join(__dirname, '../dist'),
+      '/app',
+      '/app/dist',
+      '/app/backend/public'
+    ];
+    
+    const results: any = {
+      __dirname,
+      locations: {}
+    };
+    
+    locations.forEach(loc => {
+      try {
+        const exists = fs.existsSync(loc);
+        results.locations[loc] = {
+          exists,
+          files: exists ? fs.readdirSync(loc) : []
+        };
+      } catch (e) {
+        results.locations[loc] = { error: e instanceof Error ? e.message : 'Unknown error' };
+      }
+    });
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+  }
+});
+
+// 🔍 Debug middleware for API routes:
+app.use('/api/*', (req: Request, res: Response, next: Function) => {
+  console.log('[API DEBUG] Request:', req.method, req.path, req.url);
+  console.log('[API DEBUG] Body:', req.body);
+  next();
+});
+
+// ADD A SIMPLE TEST ROUTE
+app.get('/api/test', (req: Request, res: Response) => {
+  res.json({ 
+    message: 'API is working!', 
+    timestamp: new Date().toISOString(),
+    path: req.path,
+    url: req.url
+  });
+});
 
 app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
   const { url } = req.body;
@@ -280,6 +283,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
 
+    // const MAX_PAGES_TO_SCAN = 1;
     const urlsToVisit: string[] = [url];
     const visitedUrls = new Set<string>();
     const allCookieMap = new Map<string, any>();
@@ -344,7 +348,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
                 processItems(allCookieMap, postAcceptCookies, 'post-acceptance', true);
                 processItems(allTrackerMap, Array.from(postAcceptTrackers), 'post-acceptance', false);
                 console.log(`[SCAN] Post-acceptance: ${postAcceptCookies.length} cookies, ${postAcceptTrackers.size} trackers.`);
-            } else {
+            } else { // Simplified scan for subsequent pages
                 const { cookies, trackers } = await collectPageData(page, SCAN_TIMEOUT);
                 processItems(allCookieMap, cookies, 'post-acceptance', true);
                 processItems(allTrackerMap, Array.from(trackers), 'post-acceptance', false);
@@ -359,7 +363,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
                     try {
                         const linkUrl = new URL(anchor.href, document.baseURI);
                         if (linkUrl.hostname === hostname) {
-                            links.add(linkUrl.href.split('#')[0]);
+                            links.add(linkUrl.href.split('#')[0]); // Add link without fragment
                         }
                     } catch (e) { /* ignore invalid URLs */ }
                 });
@@ -376,6 +380,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
              console.warn(`[CRAWL] Failed to load page ${currentUrl}:`, pageError instanceof Error ? pageError.message : pageError);
         }
     }
+
 
     const allItemsToAnalyze = [
         ...Array.from(allCookieMap.values()).map(value => ({ type: 'cookie', data: value })),
@@ -394,11 +399,13 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     });
 }
 
+    const BATCH_SIZE = 40;
     const batches = [];
     for (let i = 0; i < allItemsToAnalyze.length; i += BATCH_SIZE) {
     batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
     }
     console.log(`[AI] Splitting analysis into ${batches.length} batch(es) of size ~${BATCH_SIZE}.`);
+
 
     const analyzeBatch = async (batch: any[], batchNum: number, maxRetries = 2): Promise<any[]> => {
   const itemsForBatchAnalysis = batch.map(item => {
@@ -455,9 +462,10 @@ ${JSON.stringify(itemsForBatchAnalysis, null, 2)}`;
             throw new Error(`Gemini API returned an empty response for analysis batch #${batchNum + 1}.`);
         }
 
-        // Clean the response text to extract only JSON
+        // FIX: Clean the response text to extract only JSON
         resultText = resultText.trim();
         
+        // Find the first '[' and last ']' to extract JSON array
         const firstBracket = resultText.indexOf('[');
         const lastBracket = resultText.lastIndexOf(']');
         
@@ -465,6 +473,7 @@ ${JSON.stringify(itemsForBatchAnalysis, null, 2)}`;
             throw new Error(`No valid JSON array found in AI response`);
         }
         
+        // Extract only the JSON part
         const jsonPart = resultText.substring(firstBracket, lastBracket + 1);
         
         try {
@@ -498,16 +507,18 @@ for (const [index, batch] of batches.entries()) {
         const batchAnalysis = await analyzeBatch(batch, index);
         aggregatedAnalysis.push(...batchAnalysis);
         
+        // Short delay between batches to prevent rate limiting
         if (index < batches.length - 1) {
             await new Promise(res => setTimeout(res, 500));
         }
     } catch (error) {
         console.error(`[AI] Batch ${index + 1} failed, continuing with next batch:`, error);
+        // Continue processing other batches instead of failing entirely
         continue;
     }
 }
 
-// Fallback if no successful analysis
+// If no successful analysis, provide fallback
 if (aggregatedAnalysis.length === 0) {
     console.warn('[AI] All AI batches failed, providing basic analysis');
     return res.json({
@@ -624,7 +635,8 @@ Return ONLY the valid JSON object.`;
   }
 });
 
-// Vulnerability scanning endpoint - optimized for cloud
+// SINGLE FIX: Replace your /api/scan-vulnerabilities route with this optimized version
+
 app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string }>, res: Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
@@ -641,20 +653,22 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
             '--disable-gpu',
             '--no-first-run',
             '--no-default-browser-check',
+            // ADD THESE FOR SPEED:
             '--disable-extensions',
             '--disable-plugins',
-            '--disable-images',
+            '--disable-images', // Skip loading images for faster scan
             '--disable-web-security',
             '--disable-features=TranslateUI'
           ],
-          defaultViewport: { width: 1280, height: 720 },
-          timeout: 10000
+          defaultViewport: { width: 1280, height: 720 }, // Smaller viewport
+          timeout: 10000 // Faster startup
         });
         const page = await browser.newPage();
         
+        // FASTER: Use domcontentloaded instead of networkidle0
         const response = await page.goto(url, { 
-            waitUntil: 'domcontentloaded',
-            timeout: 20000
+            waitUntil: 'domcontentloaded', // Changed from 'networkidle0'
+            timeout: 20000 // Reduced from 60000 to 20000
         });
         if (!response) throw new Error('Could not get a response from the URL.');
 
@@ -662,11 +676,12 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
         const cookies = await page.cookies();
         
         const pageData = await page.evaluate(() => {
+            // FASTER: Limit data collection to essential items only
             const comments: string[] = [];
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT, null);
             let node;
             let commentCount = 0;
-            while((node = walker.nextNode()) && commentCount < 10) {
+            while((node = walker.nextNode()) && commentCount < 10) { // Limit to 10 comments
                 if (node.nodeValue) {
                     comments.push(node.nodeValue.trim());
                     commentCount++;
@@ -674,20 +689,20 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
             }
 
             const externalScripts = Array.from(document.querySelectorAll('script[src]'))
-                .slice(0, 20)
+                .slice(0, 20) // Limit to first 20 scripts
                 .map(s => s.getAttribute('src'))
                 .filter((src): src is string => !!src && (src.startsWith('http') || src.startsWith('//')));
                  
             const metaTags = Array.from(document.querySelectorAll('meta'))
-                .slice(0, 15)
+                .slice(0, 15) // Limit to first 15 meta tags
                 .map(m => ({ name: m.name, content: m.content }));
 
             const insecureLinks = Array.from(document.querySelectorAll('a[target="_blank"]:not([rel~="noopener"]):not([rel~="noreferrer"])'))
-                .slice(0, 10)
+                .slice(0, 10) // Limit to first 10 insecure links
                 .map(a => (a as HTMLAnchorElement).href);
 
             const forms = Array.from(document.querySelectorAll('form'))
-                .slice(0, 5)
+                .slice(0, 5) // Limit to first 5 forms
                 .map(f => ({
                     action: f.getAttribute('action') || '',
                     method: f.getAttribute('method') || 'GET',
@@ -697,6 +712,7 @@ app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string 
             return { comments, externalScripts, metaTags, insecureLinks, forms };
         });
 
+        // SHORTER, FOCUSED PROMPT for faster AI processing
         const vulnerabilityPrompt = `You are a security expert. Analyze this website data and provide a focused security assessment.
 
 **Data:**
@@ -865,7 +881,7 @@ Your final output must be a single, valid JSON object adhering to this structure
     }
 });
 
-// Template Library Endpoints
+// --- Template Library Endpoints ---
 app.get('/api/templates', (req: Request, res: Response) => {
     console.log('[SERVER] Fetching all contract templates.');
     res.json(Array.from(templateLibrary.values()));
@@ -1035,7 +1051,7 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
     }
 });
 
-// SPA fallback for production
+// SPA fallback for production - MOVE THIS BEFORE ERROR HANDLERS
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req: Request, res: Response) => {
     // Don't serve index.html for API routes
