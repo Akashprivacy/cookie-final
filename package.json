@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    ""html-to-docx": "^1.8.0",
+    "html-to-docx": "^1.8.0",
     "diff": "^5.2.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.1",
