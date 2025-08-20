@@ -75,7 +75,6 @@ app.get('/debug-routes', (req: Request, res: Response) => {
   });
 });
 
-
 // Serve static files in production - MOVE THIS AFTER BASIC ROUTES BUT BEFORE API ROUTES
 if (process.env.NODE_ENV === 'production') {
   const staticPath = path.join(__dirname, '..', 'public');
@@ -190,7 +189,10 @@ const collectPageData = async (page: Page, scanTimeout: number): Promise<{ cooki
     }
 }
 
-interface ApiScanRequestBody { url: string; }
+interface ApiScanRequestBody { 
+    url: string; 
+    scanDepth?: number;
+}
 
 // Add this route to see what files exist:
 app.get('/debug-files', (req: Request, res: Response) => {
@@ -248,13 +250,13 @@ app.get('/api/test', (req: Request, res: Response) => {
 });
 
 app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
-  const { url } = req.body;
+  const { url, scanDepth } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
   
-  const MAX_PAGES_TO_SCAN = 1;
+  const MAX_PAGES_TO_SCAN = Math.max(1, Math.min(10, scanDepth || 1));
   const SCAN_TIMEOUT = 15000;
-  const BATCH_SIZE = 40;
-  console.log(`[SERVER] Received scan request for: ${url}`);
+  
+  console.log(`[SERVER] Received scan request for: ${url} with depth ${MAX_PAGES_TO_SCAN}`);
   let browser: Browser | null = null;
   try {
     // GCP Cloud Run optimized Puppeteer configuration
@@ -283,7 +285,6 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
 
-    // const MAX_PAGES_TO_SCAN = 1;
     const urlsToVisit: string[] = [url];
     const visitedUrls = new Set<string>();
     const allCookieMap = new Map<string, any>();
@@ -381,43 +382,41 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
         }
     }
 
-
     const allItemsToAnalyze = [
         ...Array.from(allCookieMap.values()).map(value => ({ type: 'cookie', data: value })),
         ...Array.from(allTrackerMap.values()).map(value => ({ type: 'tracker', data: value }))
     ];
 
     if (allItemsToAnalyze.length === 0) {
-    return res.json({
-        cookies: [], trackers: [], screenshotBase64,
-        consentBannerDetected: consentBannerFound,
-        pagesScannedCount: visitedUrls.size,
-        compliance: {
-            gdpr: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
-            ccpa: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
-        }
-    });
-}
+        return res.json({
+            cookies: [], trackers: [], screenshotBase64,
+            consentBannerDetected: consentBannerFound,
+            pagesScannedCount: visitedUrls.size,
+            compliance: {
+                gdpr: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
+                ccpa: { riskLevel: 'Low', assessment: 'No cookies or trackers were detected.'},
+            }
+        });
+    }
 
     const BATCH_SIZE = 40;
     const batches = [];
     for (let i = 0; i < allItemsToAnalyze.length; i += BATCH_SIZE) {
-    batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
+        batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
     }
     console.log(`[AI] Splitting analysis into ${batches.length} batch(es) of size ~${BATCH_SIZE}.`);
 
-
     const analyzeBatch = async (batch: any[], batchNum: number, maxRetries = 2): Promise<any[]> => {
-  const itemsForBatchAnalysis = batch.map(item => {
-    if (item.type === 'cookie') {
-        const { name, domain, path } = item.data.data;
-        return { type: 'cookie', key: `${name}|${domain}|${path}`, name, provider: domain, states: Array.from(item.data.states) };
-    }
-    const [provider] = item.data.data.split('|');
-    return { type: 'tracker', key: item.data.data, provider, states: Array.from(item.data.states) };
-  });
-
-  const batchPrompt = `You are a privacy expert categorizing web technologies. Given this batch of cookies and trackers and the states they were observed in ('pre-consent', 'post-rejection', 'post-acceptance'), provide a JSON array. For each item:
+      const itemsForBatchAnalysis = batch.map(item => {
+        if (item.type === 'cookie') {
+            const { name, domain, path } = item.data.data;
+            return { type: 'cookie', key: `${name}|${domain}|${path}`, name, provider: domain, states: Array.from(item.data.states) };
+        }
+        const [provider] = item.data.data.split('|');
+        return { type: 'tracker', key: item.data.data, provider, states: Array.from(item.data.states) };
+      });
+  
+      const batchPrompt = `You are a privacy expert categorizing web technologies. Given this batch of cookies and trackers and the states they were observed in ('pre-consent', 'post-rejection', 'post-acceptance'), provide a JSON array. For each item:
 - key: The original key.
 - category: Categorize into 'Necessary', 'Functional', 'Analytics', 'Marketing', 'Unknown'. Be strict: only essential-for-operation items are 'Necessary'.
 - purpose: (For cookies only) A very brief, one-sentence description of the cookie's likely function. Limit to 15 words. If not a cookie, return an empty string.
@@ -431,130 +430,130 @@ CRITICAL: Your response must be ONLY a valid JSON array, nothing else. Do not ad
 
 Input Data:
 ${JSON.stringify(itemsForBatchAnalysis, null, 2)}`;
-  
-  const batchResponseSchema = {
-    type: Type.ARRAY,
-    items: {
-        type: Type.OBJECT,
-        properties: {
-            key: { type: Type.STRING },
-            category: { type: Type.STRING },
-            purpose: { type: Type.STRING },
-            complianceStatus: { type: Type.STRING }
-        },
-        required: ["key", "category", "purpose", "complianceStatus"]
-    }
-  };
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-        console.log(`[AI] Analyzing batch ${batchNum + 1}/${batches.length} (Attempt ${attempt + 1})...`);
-        const result = await ai.models.generateContent({
-            model, contents: [{ parts: [{ text: batchPrompt }] }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: batchResponseSchema,
+      
+      const batchResponseSchema = {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                key: { type: Type.STRING },
+                category: { type: Type.STRING },
+                purpose: { type: Type.STRING },
+                complianceStatus: { type: Type.STRING }
             },
-        });
-        
-        let resultText = result.text;
-        if (!resultText) {
-            throw new Error(`Gemini API returned an empty response for analysis batch #${batchNum + 1}.`);
+            required: ["key", "category", "purpose", "complianceStatus"]
         }
-
-        // FIX: Clean the response text to extract only JSON
-        resultText = resultText.trim();
-        
-        // Find the first '[' and last ']' to extract JSON array
-        const firstBracket = resultText.indexOf('[');
-        const lastBracket = resultText.lastIndexOf(']');
-        
-        if (firstBracket === -1 || lastBracket === -1 || firstBracket >= lastBracket) {
-            throw new Error(`No valid JSON array found in AI response`);
-        }
-        
-        // Extract only the JSON part
-        const jsonPart = resultText.substring(firstBracket, lastBracket + 1);
-        
+      };
+      
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            const parsedResult = JSON.parse(jsonPart);
-            if (!Array.isArray(parsedResult)) {
-                throw new Error(`Response is not an array`);
+            console.log(`[AI] Analyzing batch ${batchNum + 1}/${batches.length} (Attempt ${attempt + 1})...`);
+            const result = await ai.models.generateContent({
+                model, contents: [{ parts: [{ text: batchPrompt }] }],
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: batchResponseSchema,
+                },
+            });
+            
+            let resultText = result.text;
+            if (!resultText) {
+                throw new Error(`Gemini API returned an empty response for analysis batch #${batchNum + 1}.`);
             }
-            return parsedResult;
-        } catch (parseError) {
-            console.error(`[AI] JSON Parse Error for batch ${batchNum + 1}:`, parseError);
-            console.error(`[AI] Cleaned text:`, jsonPart.substring(0, 200));
-            throw parseError;
+
+            // FIX: Clean the response text to extract only JSON
+            resultText = resultText.trim();
+            
+            // Find the first '[' and last ']' to extract JSON array
+            const firstBracket = resultText.indexOf('[');
+            const lastBracket = resultText.lastIndexOf(']');
+            
+            if (firstBracket === -1 || lastBracket === -1 || firstBracket >= lastBracket) {
+                throw new Error(`No valid JSON array found in AI response`);
+            }
+            
+            // Extract only the JSON part
+            const jsonPart = resultText.substring(firstBracket, lastBracket + 1);
+            
+            try {
+                const parsedResult = JSON.parse(jsonPart);
+                if (!Array.isArray(parsedResult)) {
+                    throw new Error(`Response is not an array`);
+                }
+                return parsedResult;
+            } catch (parseError) {
+                console.error(`[AI] JSON Parse Error for batch ${batchNum + 1}:`, parseError);
+                console.error(`[AI] Cleaned text:`, jsonPart.substring(0, 200));
+                throw parseError;
+            }
+            
+        } catch(error) {
+            console.warn(`[AI] Attempt ${attempt + 1}/${maxRetries + 1} failed for batch ${batchNum + 1}.`, error instanceof Error ? error.message : error);
+            if (attempt === maxRetries) {
+                console.error(`[AI] Batch ${batchNum + 1} failed after ${maxRetries + 1} attempts.`);
+                throw error;
+            }
+            await new Promise(res => setTimeout(res, 1500 * (attempt + 1)));
         }
-        
-    } catch(error) {
-        console.warn(`[AI] Attempt ${attempt + 1}/${maxRetries + 1} failed for batch ${batchNum + 1}.`, error instanceof Error ? error.message : error);
-        if (attempt === maxRetries) {
-            console.error(`[AI] Batch ${batchNum + 1} failed after ${maxRetries + 1} attempts.`);
-            throw error;
-        }
-        await new Promise(res => setTimeout(res, 1500 * (attempt + 1)));
-    }
-  }
-  throw new Error(`Exhausted all retries for batch ${batchNum + 1}`);
-};
+      }
+      throw new Error(`Exhausted all retries for batch ${batchNum + 1}`);
+    };
 
     const aggregatedAnalysis: any[] = [];
-for (const [index, batch] of batches.entries()) {
-    try {
-        console.log(`[AI] Processing batch ${index + 1}/${batches.length}...`);
-        const batchAnalysis = await analyzeBatch(batch, index);
-        aggregatedAnalysis.push(...batchAnalysis);
-        
-        // Short delay between batches to prevent rate limiting
-        if (index < batches.length - 1) {
-            await new Promise(res => setTimeout(res, 500));
+    for (const [index, batch] of batches.entries()) {
+        try {
+            console.log(`[AI] Processing batch ${index + 1}/${batches.length}...`);
+            const batchAnalysis = await analyzeBatch(batch, index);
+            aggregatedAnalysis.push(...batchAnalysis);
+            
+            // Short delay between batches to prevent rate limiting
+            if (index < batches.length - 1) {
+                await new Promise(res => setTimeout(res, 500));
+            }
+        } catch (error) {
+            console.error(`[AI] Batch ${index + 1} failed, continuing with next batch:`, error);
+            // Continue processing other batches instead of failing entirely
+            continue;
         }
-    } catch (error) {
-        console.error(`[AI] Batch ${index + 1} failed, continuing with next batch:`, error);
-        // Continue processing other batches instead of failing entirely
-        continue;
     }
-}
 
-// If no successful analysis, provide fallback
-if (aggregatedAnalysis.length === 0) {
-    console.warn('[AI] All AI batches failed, providing basic analysis');
-    return res.json({
-        cookies: Array.from(allCookieMap.values()).map(c => ({
-            key: `${c.data.name}|${c.data.domain}|${c.data.path}`,
-            name: c.data.name,
-            provider: c.data.domain,
-            expiry: getHumanReadableExpiry(c.data),
-            party: c.data.domain.startsWith('.') ? 'Third' : 'First',
-            isHttpOnly: c.data.httpOnly,
-            isSecure: c.data.secure,
-            complianceStatus: 'Unknown',
-            category: 'Unknown',
-            purpose: 'Analysis failed - manual review required',
-        })),
-        trackers: Array.from(allTrackerMap.values()).map(t => {
-            const [provider, trackerUrl] = t.data.split('|');
-            return {
-                key: t.data,
-                url: trackerUrl,
-                provider,
-                category: 'Unknown',
+    // If no successful analysis, provide fallback
+    if (aggregatedAnalysis.length === 0) {
+        console.warn('[AI] All AI batches failed, providing basic analysis');
+        return res.json({
+            cookies: Array.from(allCookieMap.values()).map(c => ({
+                key: `${c.data.name}|${c.data.domain}|${c.data.path}`,
+                name: c.data.name,
+                provider: c.data.domain,
+                expiry: getHumanReadableExpiry(c.data),
+                party: c.data.domain.startsWith('.') ? 'Third' : 'First',
+                isHttpOnly: c.data.httpOnly,
+                isSecure: c.data.secure,
                 complianceStatus: 'Unknown',
-            };
-        }),
-        screenshotBase64,
-        consentBannerDetected: consentBannerFound,
-        pagesScannedCount: visitedUrls.size,
-        compliance: {
-            gdpr: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
-            ccpa: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
-        }
-    });
-}
+                category: 'Unknown',
+                purpose: 'Analysis failed - manual review required',
+            })),
+            trackers: Array.from(allTrackerMap.values()).map(t => {
+                const [provider, trackerUrl] = t.data.split('|');
+                return {
+                    key: t.data,
+                    url: trackerUrl,
+                    provider,
+                    category: 'Unknown',
+                    complianceStatus: 'Unknown',
+                };
+            }),
+            screenshotBase64,
+            consentBannerDetected: consentBannerFound,
+            pagesScannedCount: visitedUrls.size,
+            compliance: {
+                gdpr: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
+                ccpa: { riskLevel: 'Medium', assessment: 'AI analysis failed - manual privacy review recommended.'},
+            }
+        });
+    }
 
-console.log('[AI] All batches analyzed successfully.');
+    console.log('[AI] All batches analyzed successfully.');
 
     const violationSummary = {
         preConsentViolations: aggregatedAnalysis.filter(a => a.complianceStatus === 'Pre-Consent Violation').length,
@@ -635,8 +634,7 @@ Return ONLY the valid JSON object.`;
   }
 });
 
-// SINGLE FIX: Replace your /api/scan-vulnerabilities route with this optimized version
-
+// OPTIMIZED vulnerability scan route for GCP Cloud Run
 app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string }>, res: Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
