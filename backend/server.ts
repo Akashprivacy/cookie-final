@@ -1,4 +1,5 @@
-import express, { type Request, type Response } from 'express';
+
+import express, { Application, Request, Response, NextFunction } from 'express';
 import puppeteer, { type Cookie, type Page, type Frame, type Browser } from 'puppeteer';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -7,12 +8,13 @@ import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo,
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import process from 'process';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const app: express.Application = express();
+const app: Application = express();
 
 // GCP Cloud Run uses PORT environment variable, fallback to 3001 for local development
 const port = process.env.PORT || 3001;
@@ -47,7 +49,7 @@ app.get('/debug-routes', (req: Request, res: Response) => {
   type RouteInfo = { method: string; path: string };
   const routes: RouteInfo[] = [];
 
-  (app._router.stack as any[]).forEach((middleware: any) => {
+  ((app as any)._router.stack as any[]).forEach((middleware: any) => {
     if (middleware.route) { // Route is directly registered on app
       routes.push({
         method: Object.keys(middleware.route.methods).join(', ').toUpperCase(),
@@ -231,7 +233,7 @@ app.get('/debug-files', (req: Request, res: Response) => {
 });
 
 // 🔍 Debug middleware for API routes:
-app.use('/api/*', (req: Request, res: Response, next: Function) => {
+app.use('/api/*', (req: Request, res: Response, next: NextFunction) => {
   console.log('[API DEBUG] Request:', req.method, req.path, req.url);
   console.log('[API DEBUG] Body:', req.body);
   next();
@@ -399,7 +401,7 @@ app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Resp
     });
 }
 
-    const BATCH_SIZE = 40;
+    
     const batches = [];
     for (let i = 0; i < allItemsToAnalyze.length; i += BATCH_SIZE) {
     batches.push(allItemsToAnalyze.slice(i, i + BATCH_SIZE));
@@ -913,7 +915,7 @@ app.delete('/api/templates/:id', (req: Request<{ id: string }>, res: Response) =
 // Contract Generation
 interface GenerateContractBody {
     contractType: string;
-    details: string;
+    details: string; // Will be a stringified JSON object
     templateContent?: string;
 }
 app.post('/api/generate-contract', async (req: Request<{}, {}, GenerateContractBody>, res: Response) => {
@@ -926,9 +928,9 @@ app.post('/api/generate-contract', async (req: Request<{}, {}, GenerateContractB
         if (templateContent) {
             console.log(`[SERVER] Received request to generate contract from a template.`);
             generationPrompt = `
-You are an expert legal AI assistant. Your task is to complete the provided contract template using the key details supplied by the user. 
-Fill in the placeholders (like "[Your Company Name]", "[Effective Date]", "[Counterparty Name]", etc.) in the template with the corresponding information from the user's details. 
-If a detail is provided by the user but has no clear placeholder in the template, try to incorporate it logically where it makes sense. 
+You are an expert legal AI assistant. Your task is to complete the provided contract template using the key details supplied by the user in a structured JSON format.
+Diligently and accurately fill in the placeholders in the template (like "[Disclosing Party Name]", "[Effective Date]", "[Term]", etc.) with the corresponding values from the user's JSON details.
+If a detail is provided by the user but has no clear placeholder in the template, try to incorporate it logically where it makes sense.
 Adhere strictly to the structure and wording of the original template. The final title should be taken from the template's likely title or a generic one if none is obvious.
 
 **Contract Template to Complete:**
@@ -936,22 +938,22 @@ Adhere strictly to the structure and wording of the original template. The final
 ${templateContent}
 ---
 
-**User's Key Details to Incorporate:**
+**User's Key Details (JSON Format):**
 ---
 ${details}
 ---
 
-The output must be a JSON object with two keys: "title" and "content". The "content" must be the fully completed contract text based on the template.
+The output must be a JSON object with two keys: "title" and "content". The "content" must be the fully completed contract text as an HTML string. Use <p> tags for paragraphs and <strong> for emphasis where appropriate.
 Return ONLY the valid JSON object.`;
         } else {
             console.log(`[SERVER] Received request to generate a ${contractType} from scratch.`);
             generationPrompt = `
 You are an expert legal AI specializing in contract drafting. Generate a standard, professional **${contractType}**.
-Incorporate the following key details provided by the user:
+Incorporate the following key details provided by the user in a structured JSON format:
 ---
 ${details}
 ---
-The generated contract should be robust, clear, and follow best practices. The output must be a JSON object with two keys: "title" (e.g., "Mutual Non-Disclosure Agreement") and "content" (the full, formatted text of the contract).
+The generated contract should be robust, clear, and follow best practices. The output must be a JSON object with two keys: "title" (e.g., "Mutual Non-Disclosure Agreement") and "content" (the full, formatted text of the contract as an HTML string. Use <p> tags for paragraphs, <h2> for section headers, and <strong> for party names or important terms.).
 Return ONLY the valid JSON object.`;
         }
         
@@ -1071,7 +1073,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Error handling middleware
-app.use((err: Error, req: Request, res: Response, next: Function) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     console.error('[SERVER] Unhandled error:', err);
     console.error('[SERVER] Error stack:', err.stack);
     res.status(500).json({ 
