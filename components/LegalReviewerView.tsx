@@ -3,12 +3,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import type { LegalAnalysisResult, LegalPerspective, GeneratedContract, ContractTemplate } from '../types';
 import { ScanningProgress } from './ScanningProgress';
-import { AlertTriangleIcon, DocumentTextIcon, UploadCloudIcon, ScaleIcon, BookOpenIcon, ArrowDownTrayIcon } from './Icons';
+import { AlertTriangleIcon, DocumentTextIcon, UploadCloudIcon, ScaleIcon, BookOpenIcon } from './Icons';
 import { LegalAnalysisDisplay } from './LegalAnalysisDisplay';
 import { TemplateLibrary } from './TemplateLibrary';
 import * as mammoth from 'mammoth';
-import { saveAs } from 'file-saver';
-import { asBlob } from 'html-to-docx';
 
 
 const API_BASE_URL = (window as any).API_BASE_URL;
@@ -26,6 +24,18 @@ type ViewMode = 'analyze' | 'generate' | 'templates';
 
 // --- Contract Generation Form Component ---
 
+const governingLawOptions = [
+    'GDPR (EU)',
+    'CCPA/CPRA (California, USA)',
+    'DPDP (India)',
+    'PIPEDA (Canada)',
+    'Delaware (USA)',
+    'California (USA)',
+    'New York (USA)',
+    'England and Wales',
+    'Ireland',
+];
+
 const contractFieldsConfig: Record<string, Record<string, any>> = {
   'Non-Disclosure Agreement (NDA)': {
     disclosingParty: { label: 'Disclosing Party', type: 'text', placeholder: 'e.g., ACME Corporation' },
@@ -33,7 +43,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     effectiveDate: { label: 'Effective Date', type: 'date' },
     term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., 2 years from Effective Date' },
     purpose: { label: 'Purpose of Disclosure', type: 'textarea', placeholder: 'To evaluate a potential business relationship.' },
-    governingLaw: { label: 'Governing Law', type: 'select', options: ['Delaware', 'California', 'New York'] },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
   },
   'Consulting Agreement': {
     consultantName: { label: 'Consultant Name', type: 'text', placeholder: 'e.g., Jane Doe' },
@@ -41,7 +51,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     services: { label: 'Description of Services', type: 'textarea', placeholder: 'Provide a detailed description of the consulting services to be rendered.' },
     term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., From Start Date until project completion' },
     compensation: { label: 'Compensation', type: 'text', placeholder: 'e.g., $150 per hour, invoiced monthly' },
-    governingLaw: { label: 'Governing Law', type: 'select', options: ['Delaware', 'California', 'New York'] },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
   },
   'Service Agreement': {
     providerName: { label: 'Service Provider', type: 'text', placeholder: 'e.g., Tech Solutions LLC' },
@@ -49,7 +59,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     services: { label: 'Scope of Services', type: 'textarea', placeholder: 'Clearly define the services, deliverables, and any performance metrics.' },
     term: { label: 'Agreement Term', type: 'text', placeholder: 'e.g., 1 year, auto-renewing monthly' },
     paymentTerms: { label: 'Payment Terms', type: 'textarea', placeholder: 'e.g., Net 30 days upon receipt of monthly invoice.' },
-    governingLaw: { label: 'Governing Law', type: 'select', options: ['Delaware', 'California', 'New York'] },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
   },
 };
 
@@ -148,7 +158,6 @@ export const LegalReviewerView: React.FC = () => {
     // Shared State
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isParsing, setIsParsing] = useState<boolean>(false);
-    const [isDownloading, setIsDownloading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
     const fetchTemplates = useCallback(async () => {
@@ -277,22 +286,6 @@ export const LegalReviewerView: React.FC = () => {
         }
     }, [contractType, contractDetails, templates, selectedTemplateId]);
     
-    const handleDownloadDocx = async () => {
-        if (!generatedContract) return;
-        setIsDownloading(true);
-        setError(null);
-        try {
-            const blob = await asBlob(generatedContract.content);
-            const fileName = generatedContract.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            saveAs(blob, `${fileName}.docx`);
-        } catch (err) {
-            console.error("Failed to download docx", err);
-            setError("Could not generate .docx file. This feature might not be supported in all browsers.");
-        } finally {
-            setIsDownloading(false);
-        }
-    };
-
     const stripHtml = (html: string) => {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         return doc.body.textContent || "";
@@ -436,11 +429,6 @@ export const LegalReviewerView: React.FC = () => {
                             <button onClick={() => navigator.clipboard.writeText(stripHtml(generatedContract.content))} 
                                     className="px-5 py-2 text-sm font-semibold bg-brand-blue text-white rounded-md hover:bg-brand-blue-light transition-colors">
                                 Copy to Clipboard
-                            </button>
-                            <button onClick={handleDownloadDocx} disabled={isDownloading}
-                                    className="flex items-center justify-center gap-2 px-5 py-2 text-sm font-semibold text-brand-blue border border-brand-blue rounded-md hover:bg-brand-blue/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                <ArrowDownTrayIcon className="h-5 w-5" />
-                                {isDownloading ? 'Downloading...' : 'Download as .docx'}
                             </button>
                         </div>
                     </div>
