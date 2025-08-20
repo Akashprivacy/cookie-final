@@ -85,10 +85,15 @@
 </head>
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] antialiased transition-colors duration-300">
     <div id="root"></div>
-    <script>
-      // Define a global, foolproof API URL for the application
-      window.API_BASE_URL = 'http://localhost:3001';
-    </script>
+   <script>
+  // Always use origin (same host as the frontend) for API endpoints
+  function getApiUrl() {
+    // For Cloud Run or App Engine, use current location's origin (https://yourservice-xxxxxx.a.run.app)
+    return window.location.origin;
+  }
+  window.API_BASE_URL = getApiUrl();
+  console.log('API Base URL:', window.API_BASE_URL);
+</script>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
