@@ -1,5 +1,5 @@
 
-import express, { Application, Request, Response, NextFunction } from 'express';
+import express from 'express';
 import puppeteer, { type Cookie, type Page, type Frame, type Browser } from 'puppeteer';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -8,13 +8,12 @@ import { CookieCategory, type CookieInfo, type ScanResultData, type TrackerInfo,
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import process from 'process';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const app: Application = express();
+const app: express.Application = express();
 
 // GCP Cloud Run uses PORT environment variable, fallback to 3001 for local development
 const port = process.env.PORT || 3001;
@@ -41,11 +40,11 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 
 // Health check endpoint for GCP
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (req: express.Request, res: express.Response) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-app.get('/debug-routes', (req: Request, res: Response) => {
+app.get('/debug-routes', (req: express.Request, res: express.Response) => {
   type RouteInfo = { method: string; path: string };
   const routes: RouteInfo[] = [];
 
@@ -195,7 +194,7 @@ const collectPageData = async (page: Page, scanTimeout: number): Promise<{ cooki
 interface ApiScanRequestBody { url: string; }
 
 // Add this route to see what files exist:
-app.get('/debug-files', (req: Request, res: Response) => {
+app.get('/debug-files', (req: express.Request, res: express.Response) => {
   try {
     // Check multiple possible locations
     const locations = [
@@ -233,14 +232,14 @@ app.get('/debug-files', (req: Request, res: Response) => {
 });
 
 // 🔍 Debug middleware for API routes:
-app.use('/api/*', (req: Request, res: Response, next: NextFunction) => {
+app.use('/api/*', (req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.log('[API DEBUG] Request:', req.method, req.path, req.url);
   console.log('[API DEBUG] Body:', req.body);
   next();
 });
 
 // ADD A SIMPLE TEST ROUTE
-app.get('/api/test', (req: Request, res: Response) => {
+app.get('/api/test', (req: express.Request, res: express.Response) => {
   res.json({ 
     message: 'API is working!', 
     timestamp: new Date().toISOString(),
@@ -249,7 +248,7 @@ app.get('/api/test', (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/scan', async (req: Request<{}, {}, ApiScanRequestBody>, res: Response) => {
+app.post('/api/scan', async (req: express.Request<{}, {}, ApiScanRequestBody>, res: express.Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
   
@@ -639,7 +638,7 @@ Return ONLY the valid JSON object.`;
 
 // SINGLE FIX: Replace your /api/scan-vulnerabilities route with this optimized version
 
-app.post('/api/scan-vulnerabilities', async (req: Request<{}, {}, { url: string }>, res: Response) => {
+app.post('/api/scan-vulnerabilities', async (req: express.Request<{}, {}, { url: string }>, res: express.Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
@@ -806,7 +805,7 @@ interface LegalReviewBody {
     documentText: string;
     perspective: LegalPerspective;
 }
-app.post('/api/analyze-legal-document', async (req: Request<{}, {}, LegalReviewBody>, res: Response) => {
+app.post('/api/analyze-legal-document', async (req: express.Request<{}, {}, LegalReviewBody>, res: express.Response) => {
     const { documentText, perspective } = req.body;
     if (!documentText) return res.status(400).json({ error: 'Document text is required.' });
 
@@ -884,12 +883,12 @@ Your final output must be a single, valid JSON object adhering to this structure
 });
 
 // --- Template Library Endpoints ---
-app.get('/api/templates', (req: Request, res: Response) => {
+app.get('/api/templates', (req: express.Request, res: express.Response) => {
     console.log('[SERVER] Fetching all contract templates.');
     res.json(Array.from(templateLibrary.values()));
 });
 
-app.post('/api/templates', (req: Request<{}, {}, { name: string; content: string }>, res: Response) => {
+app.post('/api/templates', (req: express.Request<{}, {}, { name: string; content: string }>, res: express.Response) => {
     const { name, content } = req.body;
     if (!name || !content) {
         return res.status(400).json({ error: 'Template name and content are required.' });
@@ -901,7 +900,7 @@ app.post('/api/templates', (req: Request<{}, {}, { name: string; content: string
     res.status(201).json(newTemplate);
 });
 
-app.delete('/api/templates/:id', (req: Request<{ id: string }>, res: Response) => {
+app.delete('/api/templates/:id', (req: express.Request<{ id: string }>, res: express.Response) => {
     const { id } = req.params;
     if (templateLibrary.has(id)) {
         templateLibrary.delete(id);
@@ -918,7 +917,7 @@ interface GenerateContractBody {
     details: string; // Will be a stringified JSON object
     templateContent?: string;
 }
-app.post('/api/generate-contract', async (req: Request<{}, {}, GenerateContractBody>, res: Response) => {
+app.post('/api/generate-contract', async (req: express.Request<{}, {}, GenerateContractBody>, res: express.Response) => {
     const { contractType, details, templateContent } = req.body as GenerateContractBody;
     if (!contractType || !details) return res.status(400).json({ error: 'Contract type and details are required.' });
 
@@ -989,7 +988,7 @@ interface ChatRequestBody {
     documentText: string;
     question: string;
 }
-app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>, res: Response) => {
+app.post('/api/chat-with-document', async (req: express.Request<{}, {}, ChatRequestBody>, res: express.Response) => {
     const { documentText, question } = req.body;
     if (!documentText || !question) {
         return res.status(400).json({ error: 'Document text and a question are required.' });
@@ -1055,7 +1054,7 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
 
 // SPA fallback for production - MOVE THIS BEFORE ERROR HANDLERS
 if (process.env.NODE_ENV === 'production') {
-  app.get('*', (req: Request, res: Response) => {
+  app.get('*', (req: express.Request, res: express.Response) => {
     // Don't serve index.html for API routes
     if (req.path.startsWith('/api/') || req.path.startsWith('/health') || req.path.startsWith('/debug-')) {
       return res.status(404).json({ error: 'API endpoint not found' });
@@ -1073,7 +1072,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Error handling middleware
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error('[SERVER] Unhandled error:', err);
     console.error('[SERVER] Error stack:', err.stack);
     res.status(500).json({ 
