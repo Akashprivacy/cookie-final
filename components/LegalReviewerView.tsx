@@ -7,6 +7,8 @@ import { AlertTriangleIcon, DocumentTextIcon, UploadCloudIcon, ScaleIcon, BookOp
 import { LegalAnalysisDisplay } from './LegalAnalysisDisplay';
 import { TemplateLibrary } from './TemplateLibrary';
 import * as mammoth from 'mammoth';
+import { saveAs } from 'file-saver';
+import { asBlob } from 'html-to-docx';
 
 
 const API_BASE_URL = (window as any).API_BASE_URL;
@@ -275,23 +277,17 @@ export const LegalReviewerView: React.FC = () => {
         }
     }, [contractType, contractDetails, templates, selectedTemplateId]);
     
-     const handleDownloadDocx = async () => {
+    const handleDownloadDocx = async () => {
         if (!generatedContract) return;
         setIsDownloading(true);
+        setError(null);
         try {
-            const htmlToDocx = (await import('@galkin/html-to-docx')).default;
-            const fileBuffer = await htmlToDocx(generatedContract.content);
-            const blob = new Blob([fileBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
+            const blob = await asBlob(generatedContract.content);
             const fileName = generatedContract.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            link.download = `${fileName}.docx`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            saveAs(blob, `${fileName}.docx`);
         } catch (err) {
             console.error("Failed to download docx", err);
-            setError("Could not generate .docx file. This feature is experimental.");
+            setError("Could not generate .docx file. This feature might not be supported in all browsers.");
         } finally {
             setIsDownloading(false);
         }
