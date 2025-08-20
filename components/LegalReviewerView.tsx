@@ -1,5 +1,3 @@
-
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import type { LegalAnalysisResult, LegalPerspective, GeneratedContract, ContractTemplate } from '../types';
 import { ScanningProgress } from './ScanningProgress';
@@ -7,6 +5,7 @@ import { AlertTriangleIcon, DocumentTextIcon, UploadCloudIcon, ScaleIcon, BookOp
 import { LegalAnalysisDisplay } from './LegalAnalysisDisplay';
 import { TemplateLibrary } from './TemplateLibrary';
 import * as mammoth from 'mammoth';
+
 
 const API_BASE_URL = (window as any).API_BASE_URL;
 
@@ -21,8 +20,124 @@ const legalReviewSteps = [
 
 type ViewMode = 'analyze' | 'generate' | 'templates';
 
+// --- Contract Generation Form Component ---
+
+const governingLawOptions = [
+    'GDPR (EU)',
+    'CCPA/CPRA (California, USA)',
+    'DPDP (India)',
+    'PIPEDA (Canada)',
+    'Delaware (USA)',
+    'California (USA)',
+    'New York (USA)',
+    'England and Wales',
+    'Ireland',
+];
+
+const contractFieldsConfig: Record<string, Record<string, any>> = {
+  'Non-Disclosure Agreement (NDA)': {
+    disclosingParty: { label: 'Disclosing Party', type: 'text', placeholder: 'e.g., ACME Corporation' },
+    receivingParty: { label: 'Receiving Party', type: 'text', placeholder: 'e.g., Beta LLC' },
+    effectiveDate: { label: 'Effective Date', type: 'date' },
+    term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., 2 years from Effective Date' },
+    purpose: { label: 'Purpose of Disclosure', type: 'textarea', placeholder: 'To evaluate a potential business relationship.' },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+  },
+  'Consulting Agreement': {
+    consultantName: { label: 'Consultant Name', type: 'text', placeholder: 'e.g., Jane Doe' },
+    clientName: { label: 'Client Name', type: 'text', placeholder: 'e.g., Innovate Inc.' },
+    services: { label: 'Description of Services', type: 'textarea', placeholder: 'Provide a detailed description of the consulting services to be rendered.' },
+    term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., From Start Date until project completion' },
+    compensation: { label: 'Compensation', type: 'text', placeholder: 'e.g., $150 per hour, invoiced monthly' },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+  },
+  'Service Agreement': {
+    providerName: { label: 'Service Provider', type: 'text', placeholder: 'e.g., Tech Solutions LLC' },
+    clientName: { label: 'Client Name', type: 'text', placeholder: 'e.g., Global Marketing Co.'},
+    services: { label: 'Scope of Services', type: 'textarea', placeholder: 'Clearly define the services, deliverables, and any performance metrics.' },
+    term: { label: 'Agreement Term', type: 'text', placeholder: 'e.g., 1 year, auto-renewing monthly' },
+    paymentTerms: { label: 'Payment Terms', type: 'textarea', placeholder: 'e.g., Net 30 days upon receipt of monthly invoice.' },
+    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+  },
+};
+
+
+const ContractDetailsForm: React.FC<{
+    contractType: string;
+    onDetailsChange: (details: Record<string, any>) => void;
+    isLoading: boolean;
+}> = ({ contractType, onDetailsChange, isLoading }) => {
+    const fields = contractFieldsConfig[contractType] || {};
+    
+    const getInitialState = useCallback(() => {
+        return Object.keys(fields).reduce((acc, key) => {
+            acc[key] = '';
+            if (fields[key].type === 'date') {
+                acc[key] = new Date().toISOString().split('T')[0];
+            }
+            return acc;
+        }, {} as Record<string, string>);
+    }, [fields]);
+
+    const [details, setDetails] = useState<Record<string, string>>(getInitialState());
+    const [otherGoverningLaw, setOtherGoverningLaw] = useState('');
+
+    useEffect(() => {
+        setDetails(getInitialState());
+    }, [contractType, getInitialState]);
+
+    useEffect(() => {
+        const finalDetails = { ...details };
+        if (details.governingLaw === 'Other') {
+            finalDetails.governingLaw = otherGoverningLaw;
+        }
+        onDetailsChange(finalDetails);
+    }, [details, otherGoverningLaw, onDetailsChange]);
+
+    const handleChange = (fieldId: string, value: string) => {
+        setDetails(prev => ({ ...prev, [fieldId]: value }));
+    };
+
+    if (Object.keys(fields).length === 0) return null;
+
+    return (
+        <div className="space-y-4 pt-4 border-t border-[var(--border-primary)]">
+            <h3 className="text-md font-semibold text-[var(--text-headings)]">Key Details for {contractType}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(fields).map(([id, config]) => (
+                <div key={id} className={config.type === 'textarea' ? 'md:col-span-2' : ''}>
+                    <label htmlFor={id} className="block text-sm font-medium text-[var(--text-primary)]">{config.label}</label>
+                    {config.type === 'textarea' ? (
+                         <textarea id={id} value={details[id] || ''} onChange={e => handleChange(id, e.target.value)} disabled={isLoading} rows={3}
+                                className="mt-1 w-full text-sm bg-[var(--bg-primary)] text-[var(--text-headings)] border border-[var(--border-primary)] rounded-lg focus:ring-2 focus:ring-brand-blue p-2" placeholder={config.placeholder} />
+                    ) : config.type === 'select' ? (
+                        <>
+                         <select id={id} value={details[id] || ''} onChange={e => handleChange(id, e.target.value)} disabled={isLoading}
+                                className="mt-1 block w-full py-2 px-3 border border-[var(--border-primary)] bg-[var(--bg-primary)] rounded-md shadow-sm focus:outline-none focus:ring-brand-blue focus:border-brand-blue sm:text-sm">
+                            <option value="">Select a Jurisdiction</option>
+                            {config.options.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                            <option value="Other">Other...</option>
+                        </select>
+                        {details.governingLaw === 'Other' && (
+                            <input type="text" value={otherGoverningLaw} onChange={e => setOtherGoverningLaw(e.target.value)} disabled={isLoading} placeholder="Specify jurisdiction"
+                                className="mt-2 w-full text-sm bg-[var(--bg-primary)] text-[var(--text-headings)] border border-[var(--border-primary)] rounded-lg focus:ring-2 focus:ring-brand-blue p-2" />
+                        )}
+                        </>
+                    ) : (
+                         <input id={id} type={config.type} value={details[id] || ''} onChange={e => handleChange(id, e.target.value)} disabled={isLoading} placeholder={config.placeholder}
+                                className="mt-1 w-full text-sm bg-[var(--bg-primary)] text-[var(--text-headings)] border border-[var(--border-primary)] rounded-lg focus:ring-2 focus:ring-brand-blue p-2" />
+                    )}
+                </div>
+            ))}
+            </div>
+        </div>
+    );
+};
+
+
+// --- Main Reviewer Component ---
 export const LegalReviewerView: React.FC = () => {
-    const [viewMode, setViewMode] = useState<ViewMode>('analyze');
+    const [viewMode, setViewMode] = useState<ViewMode>('generate');
     
     // State for Analysis
     const [documentText, setDocumentText] = useState<string>('');
@@ -33,7 +148,7 @@ export const LegalReviewerView: React.FC = () => {
 
     // State for Generation
     const [contractType, setContractType] = useState('Non-Disclosure Agreement (NDA)');
-    const [generationDetails, setGenerationDetails] = useState('');
+    const [contractDetails, setContractDetails] = useState<Record<string, any>>({});
     const [generatedContract, setGeneratedContract] = useState<GeneratedContract | null>(null);
     const [templates, setTemplates] = useState<ContractTemplate[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>('none');
@@ -129,10 +244,14 @@ export const LegalReviewerView: React.FC = () => {
     }, [documentText, perspective]);
 
     const handleGenerate = useCallback(async () => {
-        if (!generationDetails.trim()) {
-            setError('Please provide some key details for the contract.');
+        const requiredFields = Object.keys(contractFieldsConfig[contractType] || {});
+        const missingField = requiredFields.find(field => !contractDetails[field]);
+
+        if (missingField) {
+            setError(`Please fill in all key details. The field "${contractFieldsConfig[contractType][missingField].label}" is missing.`);
             return;
         }
+        
         setError(null);
         setIsLoading(true);
         setAnalysisResult(null);
@@ -146,7 +265,7 @@ export const LegalReviewerView: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     contractType, 
-                    details: generationDetails,
+                    details: JSON.stringify(contractDetails, null, 2),
                     templateContent: selectedTemplate ? selectedTemplate.content : undefined,
                 }),
             });
@@ -163,15 +282,20 @@ export const LegalReviewerView: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [contractType, generationDetails, templates, selectedTemplateId]);
+    }, [contractType, contractDetails, templates, selectedTemplateId]);
     
+    const stripHtml = (html: string) => {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        return doc.body.textContent || "";
+    };
+
     const resetViews = () => {
         setError(null);
         setAnalysisResult(null);
         setGeneratedContract(null);
         setDocumentText('');
         setFileName('');
-        setGenerationDetails('');
+        setContractDetails({});
     };
 
     const ViewModeTab: React.FC<{mode: ViewMode, label: string, icon: React.ReactNode}> = ({mode, label, icon}) => (
@@ -190,8 +314,8 @@ export const LegalReviewerView: React.FC = () => {
         <>
             <div className="max-w-5xl mx-auto mt-6">
                 <div className="flex flex-col sm:flex-row justify-center p-1.5 bg-[var(--bg-tertiary)] rounded-lg space-y-2 sm:space-y-0 sm:space-x-2 mb-6">
-                    <ViewModeTab mode="analyze" label="Analyze Document" icon={<ScaleIcon className="h-5 w-5"/>} />
                     <ViewModeTab mode="generate" label="Generate Contract" icon={<DocumentTextIcon className="h-5 w-5"/>} />
+                    <ViewModeTab mode="analyze" label="Analyze Document" icon={<ScaleIcon className="h-5 w-5"/>} />
                     <ViewModeTab mode="templates" label="Template Library" icon={<BookOpenIcon className="h-5 w-5"/>} />
                 </div>
 
@@ -259,14 +383,13 @@ export const LegalReviewerView: React.FC = () => {
                                 </div>
                             )}
                             
-                            <div>
-                                <label htmlFor="generation-details" className="block text-sm font-medium text-[var(--text-primary)]">Key Details to Include</label>
-                                 <textarea id="generation-details" value={generationDetails} onChange={e => setGenerationDetails(e.target.value)}
-                                    placeholder="Enter key terms, parties, dates, scope, etc. For example:&#10;Parties: ACME Corp and Beta LLC.&#10;Term: 2 years.&#10;Governing Law: Delaware."
-                                    disabled={isLoading} rows={8}
-                                    className="mt-1 w-full text-sm bg-[var(--bg-primary)] text-[var(--text-headings)] border border-[var(--border-primary)] rounded-lg focus:ring-2 focus:ring-brand-blue p-4 font-mono"/>
-                            </div>
-                            <button type="button" onClick={handleGenerate} disabled={isLoading || !generationDetails.trim()}
+                           <ContractDetailsForm
+                                contractType={contractType}
+                                onDetailsChange={setContractDetails}
+                                isLoading={isLoading}
+                            />
+
+                            <button type="button" onClick={handleGenerate} disabled={isLoading}
                                 className="w-full flex items-center justify-center gap-2 px-6 py-3 font-semibold text-white bg-brand-blue rounded-md shadow-lg hover:bg-brand-blue-light focus:outline-none focus:ring-2 focus:ring-brand-blue transition-all disabled:bg-slate-400 disabled:cursor-not-allowed">
                                <DocumentTextIcon className="h-5 w-5" />
                                {isLoading ? 'Generating...' : 'Generate Contract'}
@@ -285,10 +408,10 @@ export const LegalReviewerView: React.FC = () => {
             <div className="mt-12">
                 {isLoading && <ScanningProgress steps={legalReviewSteps} />}
                 {error && (
-                    <div className="max-w-4xl mx-auto bg-red-50 dark:bg-red-900/20 border-red-500/30 text-red-300 p-4 rounded-lg flex items-start space-x-4">
-                        <AlertTriangleIcon className="h-6 w-6 text-red-400 flex-shrink-0 mt-0.5" />
+                    <div className="max-w-4xl mx-auto bg-red-50 dark:bg-red-900/20 border border-red-500/30 text-red-700 dark:text-red-300 p-4 rounded-lg flex items-start space-x-4" role="alert">
+                        <AlertTriangleIcon className="h-6 w-6 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
                         <div>
-                            <p className="font-bold text-red-200">Error</p>
+                            <p className="font-bold text-red-800 dark:text-red-200">Error</p>
                             <p className="text-sm">{error}</p>
                         </div>
                     </div>
@@ -297,8 +420,15 @@ export const LegalReviewerView: React.FC = () => {
                 {generatedContract && !isLoading && (
                     <div className="max-w-4xl mx-auto bg-[var(--bg-secondary)] p-6 rounded-xl border border-[var(--border-primary)] shadow-sm animate-fade-in-up">
                         <h3 className="text-2xl font-bold text-[var(--text-headings)] mb-4">{generatedContract.title}</h3>
-                        <div className="whitespace-pre-wrap font-sans text-sm bg-[var(--bg-primary)] p-4 rounded-lg border border-[var(--border-primary)] max-h-[60vh] overflow-y-auto" dangerouslySetInnerHTML={{ __html: generatedContract.content.replace(/\n/g, '<br />') }}></div>
-                        <button onClick={() => navigator.clipboard.writeText(generatedContract.content)} className="mt-4 px-4 py-2 bg-brand-blue text-white rounded-md font-semibold">Copy to Clipboard</button>
+                        <div className="font-sans text-sm bg-[var(--bg-primary)] p-6 rounded-lg border border-[var(--border-primary)] max-h-[60vh] overflow-y-auto prose prose-sm dark:prose-invert max-w-none" 
+                            dangerouslySetInnerHTML={{ __html: generatedContract.content }}>
+                        </div>
+                        <div className="flex items-center gap-4 mt-6">
+                            <button onClick={() => navigator.clipboard.writeText(stripHtml(generatedContract.content))} 
+                                    className="px-5 py-2 text-sm font-semibold bg-brand-blue text-white rounded-md hover:bg-brand-blue-light transition-colors">
+                                Copy to Clipboard
+                            </button>
+                        </div>
                     </div>
                 )}
                 {!isLoading && !error && !analysisResult && !generatedContract && (
