@@ -594,30 +594,41 @@ Return ONLY the valid JSON object.`;
     const scannedUrlHostname = new URL(url).hostname;
     
     const finalEnrichedCookies: CookieInfo[] = Array.from(allCookieMap.values()).map(c => {
-        const key = `${c.data.name}|${c.data.domain}|${c.data.path}`;
-        const analyzed = analysisMap.get(key);
-        const domain = c.data.domain.startsWith('.') ? c.data.domain : `.${c.data.domain}`;
-        const rootDomain = `.${scannedUrlHostname.replace(/^www\./, '')}`;
-        return {
-            key, name: c.data.name, provider: c.data.domain, expiry: getHumanReadableExpiry(c.data),
-            party: domain.endsWith(rootDomain) ? 'First' : 'Third',
-            isHttpOnly: c.data.httpOnly, isSecure: c.data.secure,
-            complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
-            category: analyzed?.category || CookieCategory.UNKNOWN,
-            purpose: analyzed?.purpose || 'No purpose determined.',
-        };
-    });
+    const key = `${c.data.name}|${c.data.domain}|${c.data.path}`;
+    const analyzed = analysisMap.get(key);
+    const domain = c.data.domain.startsWith('.') ? c.data.domain : `.${c.data.domain}`;
+    const rootDomain = `.${scannedUrlHostname.replace(/^www\./, '')}`;
+    return {
+        key, 
+        name: c.data.name, 
+        provider: c.data.domain, 
+        expiry: getHumanReadableExpiry(c.data),
+        party: domain.endsWith(rootDomain) ? 'First' : 'Third',
+        isHttpOnly: c.data.httpOnly, 
+        isSecure: c.data.secure,
+        complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
+        category: analyzed?.category || CookieCategory.UNKNOWN,
+        purpose: analyzed?.purpose || 'No purpose determined.',
+        remediation: analyzed?.complianceStatus === ComplianceStatus.COMPLIANT ? 'No action required' : 'Review cookie necessity and user consent',
+        pagesFound: Array.from(visitedUrls)
+    };
+});
 
     const finalEnrichedTrackers: TrackerInfo[] = Array.from(allTrackerMap.values()).map(t => {
-        const [provider, trackerUrl] = t.data.split('|');
-        const key = t.data;
-        const analyzed = analysisMap.get(key);
-        return {
-            key, url: trackerUrl, provider,
-            category: analyzed?.category || CookieCategory.UNKNOWN,
-            complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
-        };
-    });
+    const [provider, trackerUrl] = t.data.split('|');
+    const key = t.data;
+    const analyzed = analysisMap.get(key);
+    return {
+        key, 
+        url: trackerUrl, 
+        provider,
+        category: analyzed?.category || CookieCategory.UNKNOWN,
+        complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
+        hostname: new URL(trackerUrl).hostname,
+        remediation: analyzed?.complianceStatus === ComplianceStatus.COMPLIANT ? 'No action required' : 'Consider blocking or requiring explicit consent',
+        pagesFound: Array.from(visitedUrls)
+    };
+});
 
     res.json({ cookies: finalEnrichedCookies, trackers: finalEnrichedTrackers, compliance: complianceAnalysis, screenshotBase64, consentBannerDetected: consentBannerFound, pagesScannedCount: visitedUrls.size });
 
