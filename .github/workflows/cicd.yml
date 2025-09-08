@@ -58,7 +58,7 @@ jobs:
             --allow-unauthenticated \
             --port=8080 \
             --memory=1Gi \
-            --cpu=0.5 \
+            --cpu=1 \
             --timeout=300 \
             --concurrency=5 \
             --min-instances=0 \
