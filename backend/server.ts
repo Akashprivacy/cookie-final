@@ -11,7 +11,7 @@ import { 
     type LegalAnalysisResult, type LegalPerspective, type VulnerabilityScanResult, 
     type VulnerabilityCategory, type GeneratedContract, ContractTemplate, type NetworkRequestItem, type LocalStorageItem,
     type LocalStorageInfo,
-    GoogleConsentV2Status,
+    GoogleConsentV2Status, 
     ComplianceInfo
 } from './types.js';
 import { findCookieInDatabase } from './cookieDatabase.js';
