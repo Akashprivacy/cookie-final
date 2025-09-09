@@ -51,14 +51,6 @@ jobs:
         id: deploy
         continue-on-error: true
         run: |
-          # Debug: Check if API_KEY secret is available (without exposing it)
-          if [ -n "${{ secrets.API_KEY }}" ]; then
-            echo "✅ API_KEY secret is available (length: ${#API_KEY})"
-          else
-            echo "❌ API_KEY secret is missing"
-            exit 1
-          fi
-          
           gcloud run deploy ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
             --image=${IMAGE_LATEST} \
@@ -73,8 +65,6 @@ jobs:
             --max-instances=10 \
             --set-env-vars="NODE_ENV=production,API_KEY=${{ secrets.API_KEY }}" \
             --quiet
-        env:
-          API_KEY: ${{ secrets.API_KEY }}
 
       - name: Rollback if Deployment Fails
         if: steps.deploy.outcome == 'failure'
