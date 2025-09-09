@@ -1,5 +1,6 @@
 
 
+
 export enum CookieCategory {
   NECESSARY = 'Necessary',
   ANALYTICS = 'Analytics',
@@ -35,24 +36,74 @@ export interface CookieInfo {
   isHttpOnly: boolean;
   isSecure: boolean;
   complianceStatus: ComplianceStatus;
+  remediation: string;
+  pagesFound: string[];
+  oneTrustClassification?: string;
+  databaseClassification?: string;
 }
 
 export interface TrackerInfo {
     key: string;
-    url: string;
-    provider: string;
+    hostname: string;
     category: CookieCategory | string;
     complianceStatus: ComplianceStatus;
+    remediation: string;
+    pagesFound: string[];
 }
+
+export interface LocalStorageInfo {
+    key: string;
+    origin: string;
+    storageKey: string;
+    category: CookieCategory | string;
+    complianceStatus: ComplianceStatus;
+    remediation: string;
+    pagesFound: string[];
+    purpose: string;
+}
+
+export interface LocalStorageItem {
+    origin: string;
+    key: string;
+    value: string;
+    pageUrl: string;
+}
+
+export interface NetworkRequestItem {
+    hostname: string;
+    url: string;
+    isTracker: boolean;
+    pageUrl: string;
+}
+
+export interface PageDetail {
+    url: string;
+    time: string;
+    banner: 'found' | 'not found';
+    cookiesCount: number;
+    thirdPartyRequestsCount: number;
+    trackingRequestsCount: number;
+    duplicateTrackingEventsFound: boolean;
+    externalLinksCount: number;
+}
+
 
 export interface ComplianceInfo {
     riskLevel: RiskLevel;
     assessment: string;
 }
 
+export interface GoogleConsentV2Status {
+  detected: boolean;
+  status: string; // e.g., "ad_storage: granted; analytics_storage: denied"
+}
+
 export interface ScanResultData {
-  cookies: CookieInfo[];
-  trackers: TrackerInfo[];
+  uniqueCookies: CookieInfo[];
+  uniqueTrackers: TrackerInfo[];
+  uniqueLocalStorage: LocalStorageInfo[];
+  thirdPartyDomains: { hostname: string, count: number, pagesFound: string[] }[];
+  pages: { url: string }[];
   screenshotBase64: string;
   compliance: {
     gdpr: ComplianceInfo;
@@ -60,6 +111,9 @@ export interface ScanResultData {
   };
   consentBannerDetected: boolean;
   pagesScannedCount: number;
+  googleConsentV2: GoogleConsentV2Status;
+  cmpProvider: string;
+  cookiePolicyDetected: boolean;
 }
 
 // --- Legal Review Types ---
