@@ -1012,17 +1012,29 @@ app.get('/api/scan', async (req: Request, res: Response) => {
         };
 
         const aggregatedAnalysis: any[] = [];
-        for (const [index, batch] of batches.entries()) {
-            sendEvent({ type: 'log', message: `Analyzing batch ${index + 1}/${batches.length}...` });
+
+        // Process all batches in parallel
+        sendEvent({ type: 'log', message: `Starting parallel analysis of ${batches.length} batches...` });
+        
+        const batchPromises = batches.map(async (batch, index) => {
             try {
-                const batchAnalysis = await analyzeBatch(batch, index);
-                aggregatedAnalysis.push(...batchAnalysis);
+                sendEvent({ type: 'log', message: `Processing batch ${index + 1}/${batches.length}...` });
+                return await analyzeBatch(batch, index);
             } catch (error) {
-                console.error(`[AI] Batch ${index + 1} failed completely:`, error);
-                sendEvent({ type: 'log', message: `Warning: AI analysis batch ${index + 1} failed. Continuing with remaining batches.` });
-                // Continue with other batches
+                console.error(`[AI] Batch ${index + 1} failed:`, error);
+                sendEvent({ type: 'log', message: `Batch ${index + 1} failed, continuing...` });
+                return [];
             }
-        }
+        });
+        
+        const batchResults = await Promise.allSettled(batchPromises);
+        batchResults.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+                aggregatedAnalysis.push(...result.value);
+            } else {
+                console.error(`Batch ${index + 1} rejected:`, result.reason);
+            }
+        });
 
         if (aggregatedAnalysis.length === 0) {
             console.error('[AI] All AI analysis batches failed');
