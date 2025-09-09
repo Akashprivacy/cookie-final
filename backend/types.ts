@@ -34,6 +34,8 @@ export interface CookieInfo {
   complianceStatus: ComplianceStatus | string;
   remediation: string;
   pagesFound: string[];
+  oneTrustClassification?: string;
+  databaseClassification?: string;
 }
 
 export interface TrackerInfo {
@@ -104,8 +106,10 @@ export interface ScanResultData {
     ccpa: ComplianceInfo;
   };
   consentBannerDetected: boolean;
+  cookiePolicyDetected: boolean;
   pagesScannedCount: number;
   googleConsentV2: GoogleConsentV2Status;
+  cmpProvider: string;
 }
 
 
