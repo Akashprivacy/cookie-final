@@ -49,6 +49,8 @@ export interface TrackerInfo {
     complianceStatus: ComplianceStatus;
     remediation: string;
     pagesFound: string[];
+    databaseClassification?: string;
+    oneTrustClassification?: string;
 }
 
 export interface LocalStorageInfo {
