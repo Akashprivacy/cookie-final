@@ -1,616 +1,736 @@
-
-
-import React, { useState, useMemo } from 'react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import React, { useState, useMemo, useRef } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import type { ScanResultData, CookieInfo, RiskLevel, ComplianceInfo, TrackerInfo, ComplianceStatus } from '../types';
-import { CookieCategory, FilterCategory } from '../types';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as ChartTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { 
-  AnalyticsIcon, MarketingIcon, FunctionalIcon, NecessaryIcon, UnknownIcon, 
-  AlertOctagonIcon, CheckCircleIcon, FileTextIcon, CookieCareLogo, CodeBracketIcon,
-  ShieldExclamationIcon, BanIcon,
-  AlertTriangleIcon
+  CookieIcon, TagInventoryIcon, CheckCircleIcon, ShieldExclamationIcon, FileTextIcon, 
+  XMarkIcon, ArrowDownTrayIcon, GlobeAltIcon, DocumentChartBarIcon, DatabaseIcon,
+  GoogleGLogo, InformationCircleIcon, ScaleIcon
 } from './Icons';
+// FIX: Import CookieCategory as a value to be used in switch statements, separate from type-only imports.
+import { CookieCategory } from '../types';
+import type { ScanResultData, PageDetail, CookieInfo, TrackerInfo, LocalStorageInfo, ComplianceStatus, RiskLevel, CookieParty } from '../types';
 
+const ITEMS_PER_PAGE = 10;
 
-const ViolationDetailModal: React.FC<{ item: CookieInfo | TrackerInfo; onClose: () => void }> = ({ item, onClose }) => {
-    const isCookie = 'name' in item;
-    const title = isCookie ? item.name : item.provider;
-    const type = isCookie ? 'Cookie' : 'Tracker';
-    const { complianceStatus } = item;
-
-    const getViolationInfo = () => {
-        switch (complianceStatus) {
-            case 'Pre-Consent Violation':
-                return {
-                    reason: "This non-essential technology was loaded before the user provided any consent. Under GDPR, this is a violation as it does not respect the user's right to choose.",
-                    remediation: "This technology must be blocked from loading until after the user explicitly accepts the cookie policy. Configure your Consent Management Platform (CMP) or use script management tools to conditionally load this script based on the user's consent status."
-                };
-            case 'Post-Rejection Violation':
-                 return {
-                    reason: "This technology was loaded even after the user explicitly rejected the cookie policy. This directly ignores the user's choice and is a serious compliance breach.",
-                    remediation: "Your website must respect the user's decision to reject tracking. Ensure your consent management logic correctly identifies this technology and prevents it from loading or firing when consent is not granted."
-                };
-            default:
-                return { reason: 'No violation detected.', remediation: 'No action required.' };
-        }
-    };
-    
-    const { reason, remediation } = getViolationInfo();
-
-    return (
-        <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-up"
-            onClick={onClose}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="violation-title"
-        >
-            <div className="bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-primary)] shadow-2xl max-w-2xl w-full" onClick={e => e.stopPropagation()}>
-                <div className="p-5 border-b border-[var(--border-primary)] flex justify-between items-start">
-                    <div>
-                        <h3 id="violation-title" className="text-lg font-bold text-[var(--text-headings)]">{`Violation Details: ${type}`}</h3>
-                        <p className="text-sm text-[var(--text-primary)] font-mono">{title}</p>
-                    </div>
-                     <button onClick={onClose} className="p-1 rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors" aria-label="Close dialog">
-                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                </div>
-                <div className="p-6 space-y-5">
-                    {isCookie ? (
-                         <div>
-                            <h4 className="font-semibold text-sm text-[var(--text-headings)]">Purpose</h4>
-                            <p className="text-sm text-[var(--text-primary)] mt-1">{item.purpose}</p>
-                        </div>
-                    ) : (
-                         <div>
-                            <h4 className="font-semibold text-sm text-[var(--text-headings)]">Tracker URL</h4>
-                            <p className="text-sm text-[var(--text-primary)] mt-1 font-mono break-all">{item.url}</p>
-                        </div>
-                    )}
-                     <div className="p-4 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-500/20">
-                        <h5 className="font-semibold text-red-800 dark:text-red-300 text-sm">Violation Analysis</h5>
-                        <p className="text-red-700 dark:text-red-300/90 text-sm mt-1">{reason}</p>
-                     </div>
-                     <div className="p-4 rounded-md bg-green-50 dark:bg-green-900/20 border border-green-500/20">
-                        <h5 className="font-semibold text-green-800 dark:text-green-300 text-sm">Remediation Plan</h5>
-                        <p className="text-green-700 dark:text-green-300/90 text-sm mt-1">{remediation}</p>
-                     </div>
-                </div>
-            </div>
-        </div>
-    );
+// --- STYLING & HELPERS ---
+const getComplianceStyle = (status: ComplianceStatus) => {
+    switch (status) {
+        case 'Pre-Consent Violation':
+        case 'Post-Rejection Violation':
+            return { text: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-500/30' };
+        case 'Compliant':
+            return { text: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-500/30' };
+        default:
+            return { text: 'text-slate-500 dark:text-slate-400', bg: 'bg-slate-100 dark:bg-slate-800/20', border: 'border-slate-500/30' };
+    }
 };
 
-// --- STYLING HELPERS ---
-const getCategoryStyle = (category: CookieCategory | string) => {
-  switch (category) {
-    case CookieCategory.NECESSARY: return { bgColor: 'bg-blue-100 dark:bg-blue-900/30', textColor: 'text-blue-800 dark:text-blue-300', icon: <NecessaryIcon className="h-4 w-4" />, color: 'hsl(210, 90%, 50%)' };
-    case CookieCategory.ANALYTICS: return { bgColor: 'bg-green-100 dark:bg-green-900/30', textColor: 'text-green-800 dark:text-green-300', icon: <AnalyticsIcon className="h-4 w-4" />, color: 'hsl(140, 70%, 45%)' };
-    case CookieCategory.MARKETING: return { bgColor: 'bg-orange-100 dark:bg-orange-900/30', textColor: 'text-orange-800 dark:text-orange-300', icon: <MarketingIcon className="h-4 w-4" />, color: 'hsl(30, 90%, 55%)' };
-    case CookieCategory.FUNCTIONAL: return { bgColor: 'bg-purple-100 dark:bg-purple-900/30', textColor: 'text-purple-800 dark:text-purple-300', icon: <FunctionalIcon className="h-4 w-4" />, color: 'hsl(260, 80%, 65%)' };
-    default: return { bgColor: 'bg-slate-200 dark:bg-slate-700', textColor: 'text-slate-800 dark:text-slate-300', icon: <UnknownIcon className="h-4 w-4" />, color: 'hsl(220, 10%, 50%)' };
-  }
-};
-
-const getRiskStyle = (riskLevel: RiskLevel) => {
-    switch (riskLevel) {
-        case 'High': return { color: 'text-red-600 dark:text-red-400', borderColor: 'border-red-500/30 dark:border-red-500/50', bgColor: 'bg-red-50 dark:bg-red-900/20' };
-        case 'Medium': return { color: 'text-orange-600 dark:text-orange-400', borderColor: 'border-orange-500/30 dark:border-orange-500/50', bgColor: 'bg-orange-50 dark:bg-orange-900/20' };
-        case 'Low': return { color: 'text-green-600 dark:text-green-400', borderColor: 'border-green-500/30 dark:border-green-500/50', bgColor: 'bg-green-50 dark:bg-green-900/20' };
-        default: return { color: 'text-slate-600 dark:text-slate-400', borderColor: 'border-slate-300 dark:border-slate-700', bgColor: 'bg-slate-100 dark:bg-slate-800/50' };
+const getCategoryInfo = (category: CookieCategory | string) => {
+    switch (category) {
+        case CookieCategory.NECESSARY: return { color: '#3b82f6' }; // blue
+        case CookieCategory.ANALYTICS: return { color: '#8b5cf6' }; // violet
+        case CookieCategory.MARKETING: return { color: '#ec4899' }; // pink
+        case CookieCategory.FUNCTIONAL: return { color: '#10b981' }; // green
+        default: return { color: '#64748b' }; // slate
     }
 };
 
 // --- SUB-COMPONENTS ---
 
-const MethodologyInfoBox: React.FC<{onDismiss: () => void}> = ({ onDismiss }) => (
-    <div className="bg-brand-blue/5 dark:bg-brand-blue/10 border border-brand-blue/20 rounded-lg p-5 mb-8 relative">
-        <button onClick={onDismiss} className="absolute top-3 right-3 text-[var(--text-primary)] hover:text-[var(--text-headings)] transition-colors" aria-label="Dismiss">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-        <h4 className="font-bold text-lg text-brand-blue dark:text-blue-300 mb-2">How to Read This Report</h4>
-        <div className="text-sm text-[var(--text-primary)] space-y-3">
-             <p>This report uses a unique **three-stage scan** on the main page and crawls other pages to find violations that basic tools miss:</p>
-             <ul className="list-disc list-inside space-y-1 pl-2">
-                 <li><strong className="text-[var(--text-headings)]">Pre-Consent:</strong> Analyzes technologies loaded <span className="font-semibold text-red-500">before</span> a user interacts with the consent banner.</li>
-                 <li><strong className="text-[var(--text-headings)]">Post-Rejection:</strong> Analyzes technologies loaded <span className="font-semibold text-orange-500">after</span> a user rejects consent.</li>
-                 <li><strong className="text-[var(--text-headings)]">Post-Acceptance:</strong> Analyzes all technologies loaded <span className="font-semibold text-green-500">after</span> a user accepts consent.</li>
-             </ul>
-            <p>A technology is marked as <strong className="text-green-600 dark:text-green-400">Compliant</strong> if it's either essential for the site to work ('Necessary') or if it correctly waits for user consent before loading.</p>
+const StatCard: React.FC<{ 
+  title: string; 
+  value: string | number; 
+  icon: React.ReactNode; 
+  risk?: RiskLevel; 
+  details?: string; 
+  valueClassName?: string;
+  onClick?: () => void;
+}> = ({ title, value, icon, risk, details, valueClassName, onClick }) => {
+    const riskColor = risk === 'High' || risk === 'Critical' || risk === 'Medium' ? 'text-red-500 dark:text-red-400' : 'text-[var(--text-headings)]';
+    const finalValueClass = valueClassName || 'text-3xl font-bold';
+    const containerClasses = `bg-[var(--bg-secondary)] p-5 rounded-xl border border-[var(--border-primary)] flex items-start gap-4 ${onClick ? 'cursor-pointer hover:bg-[var(--bg-tertiary)] transition-colors' : ''}`;
+    
+    return (
+        <div className={containerClasses} title={details} onClick={onClick}>
+            <div className="p-3 bg-[var(--bg-tertiary)] rounded-lg text-brand-blue">{icon}</div>
+            <div>
+                <p className="text-sm font-medium text-[var(--text-primary)]">{title}</p>
+                <p className={`${finalValueClass} ${riskColor}`}>{value}</p>
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
-const WebsiteScreenshot: React.FC<{ base64: string; url: string }> = ({ base64, url }) => (
-    <div className="bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-primary)] shadow-sm">
-        <div className="p-5 border-b border-[var(--border-primary)]">
-            <h4 className="text-xl font-bold text-[var(--text-headings)]">Website Screenshot</h4>
-            <p className="text-sm text-[var(--text-primary)]">Consent banner as seen by the scanner.</p>
+const DetailsModal: React.FC<{ item: CookieInfo | TrackerInfo | LocalStorageInfo; onClose: () => void }> = ({ item, onClose }) => {
+    const isCookie = 'name' in item;
+    const isStorage = 'storageKey' in item;
+    const { text, bg } = getComplianceStyle(item.complianceStatus);
+
+    let title = '';
+    let icon: React.ReactNode;
+    if (isStorage) {
+      title = item.storageKey;
+      icon = <DatabaseIcon className="h-6 w-6 text-brand-blue" />;
+    } else if (isCookie) {
+      title = item.name;
+      icon = <CookieIcon className="h-6 w-6 text-brand-blue" />;
+    } else {
+      title = item.hostname;
+      icon = <TagInventoryIcon className="h-6 w-6 text-brand-blue" />;
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-up" onClick={onClose}>
+            <div className="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--border-primary)] shadow-2xl max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+                <header className="p-4 border-b border-[var(--border-primary)] flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        {icon}
+                        <h3 className="text-lg font-bold text-[var(--text-headings)] max-w-md truncate">{title}</h3>
+                    </div>
+                    <button onClick={onClose} className="p-1.5 rounded-full hover:bg-[var(--bg-tertiary)]"><XMarkIcon className="h-6 w-6"/></button>
+                </header>
+                <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                        <div className={`p-3 rounded-lg ${bg}`}>
+                            <p className="font-semibold text-[var(--text-headings)]">Compliance Status</p>
+                            <p className={text}>{item.complianceStatus}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                            <p className="font-semibold text-[var(--text-headings)]">AI Classification</p>
+                            <p>{item.category}</p>
+                        </div>
+                    </div>
+                     {isCookie && (item.databaseClassification || item.oneTrustClassification) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                            {item.databaseClassification && 
+                                <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                                    <p className="font-semibold text-[var(--text-headings)]">DB Classification</p>
+                                    <p>{item.databaseClassification}</p>
+                                </div>
+                            }
+                            {item.oneTrustClassification &&
+                                 <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                                    <p className="font-semibold text-[var(--text-headings)]">OneTrust Category</p>
+                                    <p>{item.oneTrustClassification}</p>
+                                </div>
+                            }
+                        </div>
+                     )}
+
+                    {(isCookie) && (
+                         <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                            <p className="font-semibold text-[var(--text-headings)]">Cookie Party</p>
+                            <p className="truncate">{item.party} Party</p>
+                        </div>
+                    )}
+
+
+                    {(isCookie || isStorage) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                             <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                                <p className="font-semibold text-[var(--text-headings)]">{isCookie ? 'Provider' : 'Origin'}</p>
+                                <p className="truncate">{isCookie ? item.provider : item.origin}</p>
+                            </div>
+                            {isCookie && 
+                                <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
+                                    <p className="font-semibold text-[var(--text-headings)]">Expiry</p>
+                                    <p>{item.expiry}</p>
+                                </div>
+                            }
+                        </div>
+                    )}
+                     {(isCookie || isStorage) && item.purpose && (
+                        <div>
+                            <h4 className="text-sm font-semibold text-[var(--text-headings)]">AI-Generated Purpose</h4>
+                            <p className="text-sm text-[var(--text-primary)] mt-1">{item.purpose}</p>
+                        </div>
+                    )}
+
+                    <div>
+                        <h4 className="text-sm font-semibold text-green-600 dark:text-green-400">Remediation Plan</h4>
+                        <div className="mt-2 p-3 bg-[var(--bg-primary)] rounded-md border border-[var(--border-primary)]">
+                          <p className="text-sm text-green-700 dark:text-green-300 whitespace-pre-wrap font-mono">{item.remediation}</p>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h4 className="text-sm font-semibold text-[var(--text-headings)]">Found On ({item.pagesFound.length} Pages)</h4>
+                        <ul className="text-sm text-[var(--text-primary)] mt-2 list-disc list-inside bg-[var(--bg-primary)] p-3 rounded-md border border-[var(--border-primary)] max-h-40 overflow-y-auto">
+                            {item.pagesFound.map(page => <li key={page} className="truncate" title={page}>{page}</li>)}
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div className="p-2 bg-[var(--bg-tertiary)]">
-            <a href={url} target="_blank" rel="noopener noreferrer" title="View live site">
-                <img 
-                    src={`data:image/jpeg;base64,${base64}`} 
-                    alt={`Screenshot of ${url}`} 
-                    className="rounded-md border-2 border-white/10 shadow-lg"
-                    loading="lazy"
-                />
-            </a>
-        </div>
-    </div>
-);
+    );
+};
 
-
-const CategoryBadge: React.FC<{ category: CookieCategory | string }> = ({ category }) => {
-  const { bgColor, textColor, icon } = getCategoryStyle(category);
+const ConsentV2InfoModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   return (
-    <span className={`inline-flex items-center gap-x-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${bgColor} ${textColor}`}>
-      {icon}
-      {category}
-    </span>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-up" onClick={onClose}>
+        <div className="bg-[var(--bg-secondary)] rounded-2xl border border-[var(--border-primary)] shadow-2xl max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+            <header className="p-4 border-b border-[var(--border-primary)] flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                    <InformationCircleIcon className="h-6 w-6 text-brand-blue" />
+                    <h3 className="text-lg font-bold text-[var(--text-headings)]">About Google Consent Mode v2</h3>
+                </div>
+                <button onClick={onClose} className="p-1.5 rounded-full hover:bg-[var(--bg-tertiary)]"><XMarkIcon className="h-6 w-6"/></button>
+            </header>
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div>
+                    <h4 className="font-semibold text-[var(--text-headings)]">What is Google Consent Mode v2?</h4>
+                    <p className="text-sm text-[var(--text-primary)] mt-1">
+                        Google Consent Mode v2 is a framework that allows your website to communicate a user's cookie consent choices (e.g., 'accepted' or 'rejected') to Google's advertising and analytics services, like Google Ads and Google Analytics.
+                    </p>
+                </div>
+                <div>
+                    <h4 className="font-semibold text-green-600 dark:text-green-400">What does "Detected" mean?</h4>
+                    <p className="text-sm text-[var(--text-primary)] mt-1">
+                        When we detect Consent Mode v2, it means your website is using this modern standard. It allows Google's tags to adjust their behavior based on user consent. For example, if a user rejects analytics cookies, Google Analytics can still collect basic, anonymous data in a 'cookieless' way for modeling purposes, helping you retain some measurement insights while respecting user privacy. It is a key requirement for using Google's services for audiences in the European Economic Area (EEA).
+                    </p>
+                </div>
+                 <div>
+                    <h4 className="font-semibold text-orange-600 dark:text-orange-400">What does "Not Detected" mean?</h4>
+                    <p className="text-sm text-[var(--text-primary)] mt-1">
+                       This means your website is likely not sending consent signals to Google services. This can lead to a complete loss of advertising and analytics data for users who do not consent, particularly from the EEA. Implementing Consent Mode v2 is highly recommended to ensure compliance and better data modeling.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
   );
 };
 
-const RADIAN = Math.PI / 180;
-const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
-    if (!percent || percent < 0.05) {
-        return null;
-    }
-    const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
-    const x = cx + radius * Math.cos(-midAngle * RADIAN);
-    const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
-    return (
-        <text
-            x={x}
-            y={y}
-            fill="white"
-            textAnchor="middle"
-            dominantBaseline="central"
-            className="text-sm font-bold pointer-events-none"
-            style={{ textShadow: '0px 1px 3px rgba(0, 0, 0, 0.5)' }}
-        >
-            {`${(percent * 100).toFixed(0)}%`}
-        </text>
-    );
-};
-
-const TechPieChart: React.FC<{ items: (CookieInfo | TrackerInfo)[] }> = ({ items }) => {
-    const data = useMemo(() => {
-        const counts = items.reduce((acc, item) => {
-            const category = item.category || CookieCategory.UNKNOWN;
-            acc[category] = (acc[category] || 0) + 1;
-            return acc;
-        }, {} as Record<string, number>);
-        return Object.entries(counts).map(([name, value]) => ({ name, value, fill: getCategoryStyle(name).color }));
-    }, [items]);
-
-    if (!items.length) return null;
-
-    return (
-        <div className="h-80 w-full">
-            <ResponsiveContainer>
-                <PieChart>
-                    <Pie 
-                        data={data} 
-                        dataKey="value" 
-                        nameKey="name" 
-                        cx="50%" 
-                        cy="50%" 
-                        innerRadius={0}
-                        outerRadius={110}
-                        paddingAngle={2} 
-                        labelLine={false} 
-                        label={renderCustomizedLabel}
-                    >
-                        {data.map((entry) => <Cell key={`cell-${entry.name}`} fill={entry.fill} stroke="var(--pie-stroke-color)" strokeWidth={2} />)}
-                    </Pie>
-                    <Tooltip 
-                        contentStyle={{ 
-                            backgroundColor: 'var(--bg-tertiary)', 
-                            color: 'var(--text-primary)', 
-                            border: '1px solid var(--border-primary)', 
-                            backdropFilter: 'blur(4px)', 
-                            borderRadius: '0.5rem',
-                            opacity: 0.95
-                        }} 
-                        itemStyle={{ color: 'var(--text-headings)' }} 
-                        labelStyle={{ color: 'var(--text-headings)', fontWeight: 'bold' }} 
-                    />
-                    <Legend 
-                        iconType="circle" 
-                        wrapperStyle={{
-                            paddingTop: '20px'
-                        }}
-                    />
-                </PieChart>
-            </ResponsiveContainer>
-        </div>
-    );
-};
-
-
-const ComplianceCard: React.FC<{ title: string; data: ComplianceInfo }> = ({ title, data }) => {
-    const { color, borderColor, bgColor } = getRiskStyle(data.riskLevel);
-    return (
-        <div className={`rounded-lg border ${borderColor} ${bgColor}`}>
-            <div className={`p-4 border-b ${borderColor}`}>
-                <h4 className="font-semibold text-[var(--text-headings)]">{title} Compliance</h4>
-                <p className={`text-2xl font-bold mt-1 ${color}`}>{data.riskLevel} Risk</p>
-            </div>
-            <div className="p-4 text-sm text-[var(--text-primary)] space-y-2">
-               <p>{data.assessment}</p>
-            </div>
-        </div>
-    );
-};
-
-const SummaryCard: React.FC<{ title: string; value: string | number; icon: React.ReactNode }> = ({ title, value, icon }) => (
-    <div className="bg-[var(--bg-secondary)] rounded-lg p-5 border border-[var(--border-primary)] shadow-sm">
-        <div className="flex items-center">
-            {icon}
-            <p className="text-sm font-medium text-[var(--text-primary)]">{title}</p>
-        </div>
-        <p className="mt-2 text-3xl font-bold text-[var(--text-headings)]">{value}</p>
-    </div>
-);
-
-interface ConsentStatusProps {
-    status: ComplianceStatus;
-    category: CookieCategory | string;
-    isClickable: boolean;
-}
-
-const ConsentStatus: React.FC<ConsentStatusProps> = ({ status, category, isClickable }) => {
-    let content;
-    let title;
-    
-    switch (status) {
-        case 'Pre-Consent Violation':
-            title = "Violation: This non-essential technology was loaded before the user gave consent.";
-            content = (
-                <div className="flex items-center space-x-2 text-red-600 dark:text-red-400">
-                    <AlertOctagonIcon className="h-5 w-5 flex-shrink-0" />
-                    <span className="text-xs font-semibold">Pre-Consent</span>
-                </div>
-            );
-            break;
-        case 'Post-Rejection Violation':
-            title = "Violation: This non-essential technology was loaded after the user rejected consent.";
-            content = (
-                <div className="flex items-center space-x-2 text-orange-600 dark:text-orange-400">
-                    <BanIcon className="h-5 w-5 flex-shrink-0" />
-                    <span className="text-xs font-semibold">Post-Rejection</span>
-                </div>
-            );
-            break;
-        case 'Compliant':
-            title = category === CookieCategory.NECESSARY
-                ? "This is an essential technology required for the website to function correctly."
-                : "This technology was correctly loaded only after user consent was given.";
-            content = (
-                 <div className="flex items-center text-green-600 dark:text-green-500">
-                    <CheckCircleIcon className="h-5 w-5"/>
-                    <span className="text-xs font-semibold ml-2">Compliant</span>
-                </div>
-            );
-            break;
-        default:
-             title = "Compliance status could not be determined for this technology.";
-             content = (
-                <div className="flex items-center space-x-2 text-slate-500">
-                    <UnknownIcon className="h-5 w-5 flex-shrink-0" />
-                    <span className="text-xs font-semibold">Unknown</span>
-                </div>
-            );
-    }
-    
-    return <div title={title} className={isClickable ? 'underline decoration-dotted' : ''}>{content}</div>;
-}
-
-const TrackersTable: React.FC<{ 
-    trackers: TrackerInfo[];
-    onTrackerClick: (tracker: TrackerInfo) => void;
-}> = ({ trackers, onTrackerClick }) => {
-    return (
-        <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-[var(--border-primary)]">
-                <thead className="bg-[var(--bg-tertiary)]/50">
-                    <tr className="text-left text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">
-                        <th scope="col" className="px-6 py-3">Compliance Status</th>
-                        <th scope="col" className="px-6 py-3">Provider</th>
-                        <th scope="col" className="px-6 py-3">Category</th>
-                        <th scope="col" className="px-6 py-3">Tracker URL</th>
-                    </tr>
-                </thead>
-                <tbody className="bg-[var(--bg-secondary)] divide-y divide-[var(--border-primary)]">
-                    {trackers.map((tracker: TrackerInfo) => {
-                        const isViolation = tracker.complianceStatus !== 'Compliant';
-                        return (
-                            <tr
-                                key={tracker.key}
-                                className={`transition-colors ${isViolation ? 'cursor-pointer hover:bg-[var(--bg-tertiary)]/80' : 'hover:bg-[var(--bg-tertiary)]/60'}`}
-                                onClick={isViolation ? () => onTrackerClick(tracker) : undefined}
-                            >
-                                <td className="px-6 py-4"><ConsentStatus status={tracker.complianceStatus} category={tracker.category} isClickable={isViolation} /></td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-[var(--text-headings)]">{tracker.provider}</td>
-                                <td className="px-6 py-4"><CategoryBadge category={tracker.category} /></td>
-                                <td className="px-6 py-4 text-xs text-[var(--text-primary)] font-mono max-w-xs truncate" title={tracker.url}>{tracker.url}</td>
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
-};
-
-
 // --- MAIN COMPONENT ---
 export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: string }> = ({ result, scannedUrl }) => {
-  const [activeFilter, setActiveFilter] = useState<FilterCategory>(FilterCategory.ALL);
-  const [showInfoBox, setShowInfoBox] = useState(true);
-  const [selectedViolation, setSelectedViolation] = useState<CookieInfo | TrackerInfo | null>(null);
+  const [activeTab, setActiveTab] = useState<'potentialIssues' | 'cookies' | 'trackers' | 'storage' | 'domains' | 'pages'>('potentialIssues');
+  const [selectedItem, setSelectedItem] = useState<CookieInfo | TrackerInfo | LocalStorageInfo | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pdfExportAreaRef = useRef<HTMLDivElement>(null);
+  const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
 
-  const violations = useMemo(() => {
-    const cookies = result.cookies.filter(c => c.complianceStatus !== 'Compliant');
-    const trackers = result.trackers.filter(t => t.complianceStatus !== 'Compliant');
-    return [...cookies, ...trackers];
+  const potentialIssuesCount = useMemo(() => {
+    const cookieIssues = result.uniqueCookies.filter(c => c.complianceStatus !== 'Compliant').length;
+    const trackerIssues = result.uniqueTrackers.filter(t => t.complianceStatus !== 'Compliant').length;
+    const storageIssues = result.uniqueLocalStorage.filter(s => s.complianceStatus !== 'Compliant').length;
+    return cookieIssues + trackerIssues + storageIssues;
   }, [result]);
+  
+  const potentialIssuesData = useMemo(() => {
+    const cookieIssues = result.uniqueCookies
+        .filter(c => c.complianceStatus !== 'Compliant')
+        .map(c => ({ ...c, itemType: 'Cookie' as const }));
+    const trackerIssues = result.uniqueTrackers
+        .filter(t => t.complianceStatus !== 'Compliant')
+        .map(t => ({ ...t, itemType: 'Tracker' as const }));
+    const storageIssues = result.uniqueLocalStorage
+        .filter(s => s.complianceStatus !== 'Compliant')
+        .map(s => ({ ...s, itemType: 'Storage' as const }));
+    return [...cookieIssues, ...trackerIssues, ...storageIssues];
+  }, [result]);
+
+  const cookieCategoryData = useMemo(() => {
+    const counts = result.uniqueCookies.reduce((acc, cookie) => {
+        const category = cookie.category || CookieCategory.UNKNOWN;
+        acc[category] = (acc[category] || 0) + 1;
+        return acc;
+    }, {} as Record<string, number>);
+    return Object.entries(counts).map(([name, value]) => ({ name, value, fill: getCategoryInfo(name).color }));
+  }, [result.uniqueCookies]);
+
+  const topProvidersData = useMemo(() => {
+    const providerCounts: Record<string, number> = {};
+    result.uniqueCookies.forEach(c => providerCounts[c.provider] = (providerCounts[c.provider] || 0) + 1);
+    result.uniqueTrackers.forEach(t => providerCounts[t.hostname] = (providerCounts[t.hostname] || 0) + 1);
+    return Object.entries(providerCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 5)
+        .map(([name, count]) => ({ name, count }));
+  }, [result.uniqueCookies, result.uniqueTrackers]);
 
   const handleExportPDF = async () => {
     setIsExporting(true);
-    const input = document.getElementById('pdf-export-area');
-    const exportButton = document.getElementById('export-button-scan');
+    try {
+        const exportArea = pdfExportAreaRef.current;
+        if (!exportArea) throw new Error("Export area not found.");
 
-    if (!input) {
-      setIsExporting(false);
-      return;
-    }
-    
-    if (exportButton) exportButton.style.visibility = 'hidden';
+        const isDark = document.documentElement.classList.contains('dark');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const margin = 15;
+        const contentWidth = pdfWidth - (margin * 2);
 
-    const canvas = await html2canvas(input, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: getComputedStyle(document.body).backgroundColor,
-    });
-    
-    if (exportButton) exportButton.style.visibility = 'visible';
-    
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = canvas.width;
-    const imgHeight = canvas.height;
-    
-    const ratio = imgWidth / pdfWidth;
-    const imgHeightOnPdf = imgHeight / ratio;
-    
-    let heightLeft = imgHeightOnPdf;
-    let position = 0;
-    
-    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeightOnPdf);
-    heightLeft -= pdfHeight;
-    
-    while (heightLeft > 0) {
-      position -= pdfHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeightOnPdf);
-      heightLeft -= pdfHeight;
-    }
-    
-    const pageCount = pdf.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-        pdf.setPage(i);
+        const primaryTextColor = isDark ? '#F1F5F9' : '#1E293B';
+        const secondaryTextColor = isDark ? '#94A3B8' : '#64748B';
+        const blueColor = '#3B82F6';
+        const redColor = '#DC2626';
+        let yPos = 20;
+
+        // --- Cover Page ---
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(32);
+        pdf.setTextColor(blueColor);
+        pdf.text('Cookie Scan Report', pdfWidth / 2, 80, { align: 'center' });
+        pdf.setFont('helvetica', 'normal');
         pdf.setFontSize(16);
-        pdf.setTextColor('#2563eb'); // Approx brand-blue
-        pdf.text('Cookie Compliance Report', 15, 15);
-        pdf.setFontSize(8);
-        pdf.setTextColor(100);
-        pdf.text(`URL: ${scannedUrl}`, 15, 20);
+        pdf.setTextColor(secondaryTextColor);
+        pdf.text('Compliance Analysis For:', pdfWidth / 2, 110, { align: 'center' });
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(22);
+        pdf.setTextColor(primaryTextColor);
+        pdf.text(new URL(scannedUrl).hostname, pdfWidth / 2, 125, { align: 'center' });
+        pdf.setFontSize(12);
+        pdf.setTextColor(secondaryTextColor);
+        pdf.text(`Scan Date: ${new Date().toLocaleDateString()}`, pdfWidth / 2, 150, { align: 'center' });
+
+        // --- Summary Page ---
+        pdf.addPage();
+        yPos = 20;
+
+        // --- Screenshot ---
+        if (result.screenshotBase64) {
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(16);
+            pdf.setTextColor(primaryTextColor);
+            pdf.text('Website Screenshot', margin, yPos);
+            yPos += 10;
+            const screenshotHeight = (contentWidth * 9) / 16;
+            pdf.addImage(`data:image/jpeg;base64,${result.screenshotBase64}`, 'JPEG', margin, yPos, contentWidth, screenshotHeight);
+            yPos += screenshotHeight + 15;
+        }
+
+        // --- Scan Summary Stats ---
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(16);
+        pdf.setTextColor(primaryTextColor);
+        pdf.text('Scan Summary', margin, yPos);
+        yPos += 10;
+
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        const col1X = margin;
+        const col2X = pdfWidth / 2;
+
+        pdf.text(`Pages Scanned: ${result.pagesScannedCount}`, col1X, yPos);
+        pdf.text(`Unique Cookies: ${result.uniqueCookies.length}`, col2X, yPos);
+        yPos += 7;
+        pdf.text(`Trackers Found: ${result.uniqueTrackers.length}`, col1X, yPos);
+        pdf.text(`Storage Items: ${result.uniqueLocalStorage.length}`, col2X, yPos);
+        yPos += 7;
+        pdf.text(`Consent Banner: ${result.consentBannerDetected ? "Detected" : "Not Detected"}`, col1X, yPos);
+        pdf.text(`Cookie Policy: ${result.cookiePolicyDetected ? "Detected" : "Not Detected"}`, col2X, yPos);
+        yPos += 7;
+        pdf.text(`Google Consent V2: ${result.googleConsentV2.detected ? "Detected" : "Not Detected"}`, col1X, yPos);
+        pdf.text(`CMP Detected: ${result.cmpProvider || 'N/A'}`, col2X, yPos);
+        yPos += 7;
+        pdf.setTextColor(redColor);
+        pdf.text(`Potential Issues: ${potentialIssuesCount}`, col1X, yPos);
+        pdf.setTextColor(primaryTextColor);
+        yPos += 12;
+
+
+        // --- Charts ---
+        const chartElements = exportArea.querySelectorAll('.chart-container');
+        const chartPromises = Array.from(chartElements).map(el => html2canvas(el as HTMLElement, { scale: 2, useCORS: true, backgroundColor: isDark ? '#1E293B' : '#FFFFFF' }));
+        const canvases = await Promise.all(chartPromises);
         
-        pdf.setFontSize(8);
-        pdf.setTextColor(150);
-        pdf.text(`Page ${i} of ${pageCount}`, pdfWidth - 35, pdfHeight - 10);
-        pdf.text(`Generated on ${new Date().toLocaleDateString()} by Cookie Care`, 15, pdfHeight - 10);
+        pdf.addImage(canvases[0].toDataURL('image/png'), 'PNG', margin, yPos, 85, 65);
+        pdf.addImage(canvases[1].toDataURL('image/png'), 'PNG', margin + 95, yPos, 85, 65);
+        yPos += 80;
+
+        // --- Detailed Findings ---
+        const addFindingToPdf = (item: CookieInfo | TrackerInfo | LocalStorageInfo, type: 'Cookie' | 'Tracker' | 'Storage') => {
+             const neededHeight = 50; // estimate
+             if (yPos + neededHeight > pdf.internal.pageSize.getHeight() - 20) {
+                pdf.addPage();
+                yPos = 20;
+             }
+             pdf.setFont('helvetica', 'bold'); pdf.setFontSize(12);
+             let name = '';
+             if (type === 'Cookie') name = (item as CookieInfo).name;
+             else if (type === 'Tracker') name = (item as TrackerInfo).hostname;
+             else name = (item as LocalStorageInfo).storageKey;
+             
+             const status = item.complianceStatus;
+             
+             if(status !== 'Compliant') pdf.setTextColor(redColor);
+             pdf.text(`[${type}] ${name}`, margin, yPos);
+             pdf.setTextColor(primaryTextColor);
+             yPos += 7;
+             
+             pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+             pdf.text(`AI Category: ${item.category} | Status: ${status}`, margin, yPos);
+             yPos += 5;
+
+             if (type === 'Cookie') {
+                const cookieItem = item as CookieInfo;
+                if (cookieItem.databaseClassification) {
+                    pdf.text(`DB Category: ${cookieItem.databaseClassification}`, margin, yPos);
+                    yPos += 5;
+                }
+                if (cookieItem.oneTrustClassification) {
+                    pdf.text(`OneTrust Category: ${cookieItem.oneTrustClassification}`, margin, yPos);
+                    yPos += 5;
+                }
+            }
+             yPos += 2;
+
+
+             pdf.setFont('helvetica', 'bold');
+             pdf.text('Remediation:', margin, yPos);
+             pdf.setFont('helvetica', 'normal');
+             const remediationLines = pdf.splitTextToSize(item.remediation, contentWidth - 25);
+             pdf.text(remediationLines, margin + 25, yPos);
+             yPos += (remediationLines.length * 4) + 5;
+             pdf.setDrawColor(isDark ? '#334155' : '#E2E8F0');
+             pdf.line(margin, yPos, pdfWidth - margin, yPos);
+             yPos += 5;
+        };
+
+        if (potentialIssuesData.length > 0) {
+            pdf.addPage(); yPos = 20;
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.setTextColor(redColor);
+            pdf.text('Potential Compliance Issues Summary', margin, yPos); yPos += 10;
+            potentialIssuesData.forEach(v => addFindingToPdf(v, (v as any).itemType));
+        }
+        
+        if(result.uniqueCookies.length > 0) {
+            pdf.addPage(); yPos = 20;
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.setTextColor(primaryTextColor);
+            pdf.text('All Cookies Found', margin, yPos); yPos += 10;
+            result.uniqueCookies.forEach(c => addFindingToPdf(c, 'Cookie'));
+        }
+
+        if(result.uniqueTrackers.length > 0) {
+            pdf.addPage(); yPos = 20;
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.setTextColor(primaryTextColor);
+            pdf.text('All Trackers Found', margin, yPos); yPos += 10;
+            result.uniqueTrackers.forEach(t => addFindingToPdf(t, 'Tracker'));
+        }
+        
+        if(result.uniqueLocalStorage.length > 0) {
+            pdf.addPage(); yPos = 20;
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.setTextColor(primaryTextColor);
+            pdf.text('All Local Storage Items Found', margin, yPos); yPos += 10;
+            result.uniqueLocalStorage.forEach(s => addFindingToPdf(s, 'Storage'));
+        }
+
+        pdf.save(`Cookie-Report-${new URL(scannedUrl).hostname}.pdf`);
+    } catch (err) {
+        console.error("PDF Export failed:", err);
+    } finally {
+        setIsExporting(false);
     }
-    
-    const hostname = new URL(scannedUrl).hostname;
-    pdf.save(`Cookie-Care-Report-${hostname}.pdf`);
-    setIsExporting(false);
   };
-
-  const filteredData = useMemo(() => {
-    const allItems = { cookies: result.cookies, trackers: result.trackers };
-    switch(activeFilter) {
-      case FilterCategory.ALL: 
-        return { ...allItems, title: 'All Technologies' };
-      case FilterCategory.TRACKERS: 
-        return { cookies: [], trackers: result.trackers, title: 'Network Trackers' };
-      case FilterCategory.VIOLATIONS: 
-        return { 
-          cookies: result.cookies.filter(c => c.complianceStatus !== 'Compliant'),
-          trackers: result.trackers.filter(t => t.complianceStatus !== 'Compliant'),
-          title: 'Compliance Violations'
-        };
-      default: // Category filters
-        return {
-          cookies: result.cookies.filter(cookie => cookie.category === activeFilter),
-          trackers: result.trackers.filter(tracker => tracker.category === activeFilter),
-          title: `${activeFilter} Technologies`
-        };
+  
+  const paginatedData = useMemo(() => {
+    const dataMap = {
+        cookies: result.uniqueCookies,
+        trackers: result.uniqueTrackers,
+        storage: result.uniqueLocalStorage,
+        potentialIssues: potentialIssuesData,
+        domains: result.thirdPartyDomains,
+        pages: result.pages,
+    };
+    const data = dataMap[activeTab] || [];
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return data.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [result, activeTab, currentPage, potentialIssuesData]);
+  
+  const dataMapForTotal = {
+    cookies: result.uniqueCookies,
+    trackers: result.uniqueTrackers,
+    storage: result.uniqueLocalStorage,
+    potentialIssues: potentialIssuesData,
+    domains: result.thirdPartyDomains,
+    pages: result.pages,
+  };
+  const totalItems = dataMapForTotal[activeTab]?.length || 0;
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+  
+  const TabButton: React.FC<{tabId: typeof activeTab, label: string, count: number, icon: React.ReactNode}> = ({ tabId, label, count, icon }) => {
+    const isActive = activeTab === tabId;
+    
+    let activeClasses = 'border-brand-blue text-brand-blue';
+    let hoverClasses = 'hover:bg-[var(--bg-tertiary)]';
+    if (label === 'Potential Issues') {
+        if (isActive) {
+            activeClasses = 'border-red-500 text-red-500';
+        }
+        hoverClasses = 'hover:bg-red-50 dark:hover:bg-red-900/20';
     }
-  }, [result, activeFilter]);
-  
-  const getCount = (category: FilterCategory) => {
-    if (category === FilterCategory.TRACKERS) return result.trackers.length;
-    if (category === FilterCategory.VIOLATIONS) return violations.length;
-    const allItems = [...result.cookies, ...result.trackers];
-    return allItems.filter(item => item.category === category).length;
-  }
-  
-  const filters = [
-    { id: FilterCategory.ALL, label: 'All', count: result.cookies.length + result.trackers.length },
-    { id: FilterCategory.TRACKERS, label: 'Trackers', count: result.trackers.length },
-    { id: FilterCategory.VIOLATIONS, label: 'Violations', count: violations.length, highlight: true },
-    { id: FilterCategory.NECESSARY, label: 'Necessary', count: getCount(FilterCategory.NECESSARY) },
-    { id: FilterCategory.ANALYTICS, label: 'Analytics', count: getCount(FilterCategory.ANALYTICS) },
-    { id: FilterCategory.MARKETING, label: 'Marketing', count: getCount(FilterCategory.MARKETING) },
-    { id: FilterCategory.FUNCTIONAL, label: 'Functional', count: getCount(FilterCategory.FUNCTIONAL) },
-  ];
 
+    return (
+      <button onClick={() => { setActiveTab(tabId); setCurrentPage(1); }} className={`flex items-center gap-2 px-4 py-3 border-b-2 font-semibold transition-colors ${isActive ? activeClasses : `border-transparent text-[var(--text-primary)] ${hoverClasses}`}`}>
+        {icon} {label} ({count})
+      </button>
+    );
+  };
+  
   return (
     <>
-      {selectedViolation && <ViolationDetailModal item={selectedViolation} onClose={() => setSelectedViolation(null)} />}
-      <div className="max-w-7xl mx-auto animate-fade-in-up">
-        <div id="pdf-export-area" className="p-2 sm:p-0 bg-[var(--bg-primary)]">
-          <div className="flex justify-between items-start mb-6">
+      <div ref={pdfExportAreaRef} className="max-w-7xl mx-auto animate-fade-in-up">
+        {/* Header */}
+        <div className="flex justify-between items-start mb-6">
             <div>
-                <h3 className="text-2xl font-bold text-[var(--text-headings)]">Compliance Dashboard</h3>
+                <h2 className="text-3xl font-bold text-[var(--text-headings)]">Compliance Dashboard</h2>
                 <p className="text-[var(--text-primary)] mt-1">
-                Report for: <a href={scannedUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-blue hover:underline">{new URL(scannedUrl).hostname}</a>
+                    Report for: <a href={scannedUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-blue hover:underline">{new URL(scannedUrl).hostname}</a>
                 </p>
             </div>
-            <button
-              id="export-button-scan"
-              onClick={handleExportPDF}
-              disabled={isExporting}
-              className="flex items-center justify-center gap-2 px-4 py-2 font-semibold text-sm text-brand-blue border border-brand-blue rounded-md hover:bg-brand-blue/10 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] focus:ring-brand-blue transition-all duration-200 disabled:bg-slate-400 disabled:text-white dark:disabled:bg-slate-600 disabled:border-slate-400 disabled:cursor-not-allowed"
-            >
-              <FileTextIcon className="h-4 w-4" />
-              {isExporting ? 'Exporting...' : 'Export to PDF'}
+            <button onClick={handleExportPDF} disabled={isExporting} className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand-blue rounded-md shadow-sm hover:bg-brand-blue-light disabled:bg-slate-400 disabled:cursor-not-allowed">
+                <ArrowDownTrayIcon className="h-5 w-5"/>
+                {isExporting ? 'Generating PDF...' : 'Export to PDF'}
             </button>
-          </div>
-          
-          {showInfoBox && <MethodologyInfoBox onDismiss={() => setShowInfoBox(false)} />}
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-8">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                      <SummaryCard title="Pages Scanned" value={result.pagesScannedCount} icon={<div className="bg-purple-100 dark:bg-purple-900/30 rounded-full p-2 mr-4"><FileTextIcon className="h-6 w-6 text-purple-600 dark:text-purple-300" /></div>} />
-                      <SummaryCard title="Total Cookies" value={result.cookies.length} icon={<div className="bg-blue-100 dark:bg-blue-900/30 rounded-full p-2 mr-4"><CheckCircleIcon className="h-6 w-6 text-blue-600 dark:text-blue-300" /></div>} />
-                      <SummaryCard title="Network Trackers" value={result.trackers.length} icon={<div className="bg-cyan-100 dark:bg-cyan-900/30 rounded-full p-2 mr-4"><CodeBracketIcon className="h-6 w-6 text-cyan-600 dark:text-cyan-300" /></div>} />
-                      <SummaryCard title="Compliance Violations" value={violations.length} icon={<div className="bg-red-100 dark:bg-red-900/30 rounded-full p-2 mr-4"><ShieldExclamationIcon className="h-6 w-6 text-red-600 dark:text-red-300" /></div>} />
-                      <SummaryCard 
-                          title="Consent Banner" 
-                          value={result.consentBannerDetected ? 'Detected' : 'Not Found'} 
-                          icon={
-                              <div className={result.consentBannerDetected 
-                                  ? "bg-green-100 dark:bg-green-900/30 rounded-full p-2 mr-4"
-                                  : "bg-yellow-100 dark:bg-yellow-900/30 rounded-full p-2 mr-4"
-                              }>
-                                  {result.consentBannerDetected 
-                                      ? <CheckCircleIcon className="h-6 w-6 text-green-600 dark:text-green-300" />
-                                      : <AlertTriangleIcon className="h-6 w-6 text-yellow-600 dark:text-yellow-300" />
-                                  }
-                              </div>
-                          } 
-                      />
-                  </div>
-                  
-                  <div className="bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-primary)] shadow-sm overflow-hidden">
-                      <div className="p-5 border-b border-[var(--border-primary)]">
-                          <h4 className="text-xl font-bold text-[var(--text-headings)]">Technology Analysis</h4>
-                      </div>
-                      <div className="px-5 pt-5">
-                          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-primary)] pb-4">
-                              {filters.map(filter => {
-                                  if (filter.count === 0 && ![FilterCategory.ALL, FilterCategory.VIOLATIONS, FilterCategory.TRACKERS].includes(filter.id as FilterCategory)) return null;
-                                  const isActive = activeFilter === filter.id;
-                                  const isHighlight = filter.highlight && filter.count > 0;
-                                  return (
-                                  <button
-                                      key={filter.id}
-                                      onClick={() => setActiveFilter(filter.id)}
-                                      className={`px-4 py-2 text-sm font-semibold rounded-full transition-colors duration-150 flex items-center ${
-                                          isActive ? (isHighlight ? 'bg-red-600 text-white shadow-sm' : 'bg-brand-blue text-white shadow-sm')
-                                          : (isHighlight ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800/70' : 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-slate-300 dark:hover:bg-slate-600')
-                                      }`}
-                                  >
-                                      {filter.label} 
-                                      <span className={`ml-2 inline-block rounded-full px-2 py-0.5 text-xs font-mono ${
-                                          isActive ? 'bg-white/20' : (isHighlight ? 'bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200' : 'bg-slate-300 dark:bg-slate-600 text-slate-700 dark:text-slate-200')
-                                      }`}>{filter.count}</span>
-                                  </button>
-                                  )
-                              })}
-                          </div>
-                      </div>
-                      
-                      <div>
-                          {/* Cookies Section */}
-                           <div className="pt-2">
-                              <h5 className="px-6 py-2 font-bold text-lg text-[var(--text-headings)]">Cookies ({filteredData.cookies.length})</h5>
-                              {filteredData.cookies.length > 0 ? (
-                                  <div className="overflow-x-auto">
-                                      <table className="min-w-full divide-y divide-[var(--border-primary)]">
-                                          <thead className="bg-[var(--bg-tertiary)]/50"><tr className="text-left text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">
-                                              <th scope="col" className="px-6 py-3">Compliance Status</th>
-                                              <th scope="col" className="px-6 py-3">Cookie Name</th>
-                                              <th scope="col" className="px-6 py-3">Provider</th>
-                                              <th scope="col" className="px-6 py-3">Category</th>
-                                              <th scope="col" className="px-6 py-3">Party</th>
-                                              <th scope="col" className="px-6 py-3">Expiry</th>
-                                          </tr></thead>
-                                          <tbody className="bg-[var(--bg-secondary)] divide-y divide-[var(--border-primary)]">
-                                          {filteredData.cookies.map((cookie: CookieInfo) => {
-                                              const isViolation = cookie.complianceStatus !== 'Compliant';
-                                              return (
-                                              <tr 
-                                                key={cookie.key} 
-                                                className={`transition-colors ${isViolation ? 'cursor-pointer hover:bg-[var(--bg-tertiary)]/80' : 'hover:bg-[var(--bg-tertiary)]/60'}`}
-                                                onClick={isViolation ? () => setSelectedViolation(cookie) : undefined}
-                                              >
-                                                  <td className="px-6 py-4"><ConsentStatus status={cookie.complianceStatus} category={cookie.category} isClickable={isViolation} /></td>
-                                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-[var(--text-headings)]">{cookie.name}</td>
-                                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--text-primary)]">{cookie.provider}</td>
-                                                  <td className="px-6 py-4"><CategoryBadge category={cookie.category} /></td>
-                                                  <td className="px-6 py-4"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${cookie.party === 'First' ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300' : 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300'}`}>{cookie.party} Party</span></td>
-                                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--text-primary)]">{cookie.expiry}</td>
-                                              </tr>
-                                          )})}
-                                          </tbody>
-                                      </table>
-                                  </div>
-                              ) : (
-                                  <div className="text-center py-8 px-6">
-                                      <p className="text-[var(--text-primary)]">{`There are no cookies matching the "${activeFilter}" filter.`}</p>
-                                  </div>
-                              )}
-                          </div>
+        </div>
+        
+        {/* NEW LAYOUT: Screenshot & Stats */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 mb-8">
+             {/* Left: Screenshot */}
+            <div className="lg:col-span-2 bg-[var(--bg-secondary)] p-4 rounded-xl border border-[var(--border-primary)] shadow-sm">
+                <h3 className="text-lg font-bold text-[var(--text-headings)] mb-3">Website Screenshot</h3>
+                <div className="rounded-lg overflow-hidden border-2 border-[var(--border-primary)] group">
+                    <div className="bg-[var(--bg-tertiary)] px-4 py-2 text-xs text-[var(--text-primary)] flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-red-400"></span>
+                        <span className="h-2 w-2 rounded-full bg-yellow-400"></span>
+                        <span className="h-2 w-2 rounded-full bg-green-400"></span>
+                        <div className="ml-2 bg-[var(--bg-primary)] rounded-full px-3 py-0.5 truncate">{new URL(scannedUrl).protocol}//{new URL(scannedUrl).hostname}</div>
+                    </div>
+                    {result.screenshotBase64 ? (
+                      <img src={`data:image/jpeg;base64,${result.screenshotBase64}`} alt={`Screenshot of ${scannedUrl}`} className="w-full" />
+                    ) : (
+                      <div className="aspect-video bg-[var(--bg-primary)] flex items-center justify-center text-sm text-[var(--text-primary)]">Screenshot not available.</div>
+                    )}
+                </div>
+            </div>
 
-                          {/* Trackers Section */}
-                          <div className="border-t border-[var(--border-primary)] pt-2 mt-4">
-                            <h5 className="px-6 py-2 font-bold text-lg text-[var(--text-headings)]">Trackers ({filteredData.trackers.length})</h5>
-                              {filteredData.trackers.length > 0 ? (
-                                 <TrackersTable trackers={filteredData.trackers} onTrackerClick={setSelectedViolation} />
-                              ) : (
-                                  <div className="text-center py-8 px-6">
-                                      <p className="text-[var(--text-primary)]">{`There are no trackers matching the "${activeFilter}" filter.`}</p>
-                                  </div>
-                              )}
-                          </div>
-                      </div>
-                  </div>
-              </div>
-              <div className="lg:col-span-1 space-y-8">
-                  <WebsiteScreenshot base64={result.screenshotBase64} url={scannedUrl} />
-                  <div className="bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-primary)] shadow-sm p-5">
-                      <h4 className="text-xl font-bold text-[var(--text-headings)] mb-2">Technology Categories</h4>
-                      <TechPieChart items={[...result.cookies, ...result.trackers]} />
-                  </div>
-                  <ComplianceCard title="GDPR" data={result.compliance.gdpr} />
-                  <ComplianceCard title="CCPA" data={result.compliance.ccpa} />
-              </div>
-          </div>
+            {/* Right: Stats */}
+            <div className="lg:col-span-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                    <StatCard title="Pages Scanned" value={result.pagesScannedCount} icon={<DocumentChartBarIcon className="h-6 w-6"/>} />
+                    <StatCard 
+                        title="Consent Banner" 
+                        value={result.consentBannerDetected ? "Detected" : "Not Detected"} 
+                        icon={result.consentBannerDetected ? <CheckCircleIcon className="h-6 w-6"/> : <ShieldExclamationIcon className="h-6 w-6"/>}
+                        risk={result.consentBannerDetected ? 'Informational' : 'High'}
+                    />
+                    <StatCard 
+                        title="Cookie Policy" 
+                        value={result.cookiePolicyDetected ? "Detected" : "Not Detected"} 
+                        icon={<FileTextIcon className="h-6 w-6"/>}
+                        risk={result.cookiePolicyDetected ? 'Informational' : 'Medium'}
+                    />
+                    <StatCard title="Potential Issues" value={potentialIssuesCount} icon={potentialIssuesCount > 0 ? <ShieldExclamationIcon className="h-6 w-6"/> : <CheckCircleIcon className="h-6 w-6"/>} risk={potentialIssuesCount > 0 ? 'High' : 'Low'} />
+                    <StatCard title="Unique Cookies" value={result.uniqueCookies.length} icon={<CookieIcon className="h-6 w-6"/>} />
+                    <StatCard title="Trackers Found" value={result.uniqueTrackers.length} icon={<TagInventoryIcon className="h-6 w-6"/>} />
+                    <StatCard title="Storage Items" value={result.uniqueLocalStorage.length} icon={<DatabaseIcon className="h-6 w-6"/>} />
+                    <StatCard 
+                        title="Google Consent V2" 
+                        value={result.googleConsentV2.detected ? "Detected" : "Not Detected"} 
+                        icon={<GoogleGLogo className="h-6 w-6"/>} 
+                        risk={result.googleConsentV2.detected ? 'Informational' : 'Low'}
+                        details={result.googleConsentV2.status}
+                        onClick={() => setIsConsentModalOpen(true)}
+                    />
+                    <StatCard title="CMP Detected" value={result.cmpProvider || 'N/A'} icon={<ScaleIcon className="h-6 w-6"/>} />
+                </div>
+            </div>
+        </div>
+
+
+        {/* Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
+            <div className="lg:col-span-2 bg-[var(--bg-secondary)] p-6 rounded-xl border border-[var(--border-primary)] chart-container">
+                <h3 className="text-lg font-bold text-[var(--text-headings)] mb-4">Cookie Categories</h3>
+                 <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                        <Pie data={cookieCategoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} labelLine={false} label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+                            const radius = innerRadius + (outerRadius - innerRadius) * 1.2;
+                            const x = cx + radius * Math.cos(-midAngle * Math.PI / 180);
+                            const y = cy + radius * Math.sin(-midAngle * Math.PI / 180);
+                            return <text x={x} y={y} fill="var(--text-primary)" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fontSize="12">{`${(percent * 100).toFixed(0)}%`}</text>;
+                        }}>
+                            {cookieCategoryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
+                        </Pie>
+                        <ChartTooltip contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-primary)' }}/>
+                    </PieChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4 text-xs">
+                    {cookieCategoryData.map(item => <div key={item.name} className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm" style={{backgroundColor: item.fill}}/><span>{item.name}</span></div>)}
+                </div>
+            </div>
+            <div className="lg:col-span-3 bg-[var(--bg-secondary)] p-6 rounded-xl border border-[var(--border-primary)] chart-container">
+                 <h3 className="text-lg font-bold text-[var(--text-headings)] mb-4">Top 5 Data Recipients</h3>
+                 <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={topProvidersData} layout="vertical" margin={{ top: 5, right: 20, left: 100, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" horizontal={false}/>
+                        <XAxis type="number" stroke="var(--text-primary)" fontSize="12" allowDecimals={false} />
+                        <YAxis type="category" dataKey="name" stroke="var(--text-primary)" fontSize="12" width={100} tickLine={false} axisLine={false} />
+                        <ChartTooltip cursor={{fill: 'var(--bg-tertiary)'}} contentStyle={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-primary)' }}/>
+                        <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+
+        {/* Tabs & Table */}
+        <div className="bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-primary)]">
+            <div className="flex items-center border-b border-[var(--border-primary)] px-4 flex-wrap">
+                <TabButton tabId="potentialIssues" label="Potential Issues" count={potentialIssuesCount} icon={<ShieldExclamationIcon className="h-5 w-5"/>}/>
+                <TabButton tabId="cookies" label="Cookies" count={result.uniqueCookies.length} icon={<CookieIcon className="h-5 w-5"/>}/>
+                <TabButton tabId="trackers" label="Trackers" count={result.uniqueTrackers.length} icon={<TagInventoryIcon className="h-5 w-5"/>}/>
+                <TabButton tabId="storage" label="Storage" count={result.uniqueLocalStorage.length} icon={<DatabaseIcon className="h-5 w-5"/>}/>
+                <TabButton tabId="domains" label="3rd Party Domains" count={result.thirdPartyDomains.length} icon={<GlobeAltIcon className="h-5 w-5"/>}/>
+                <TabButton tabId="pages" label="Pages Scanned" count={result.pages.length} icon={<FileTextIcon className="h-5 w-5"/>}/>
+            </div>
+
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--border-primary)]">
+                    <thead className="bg-[var(--bg-tertiary)]/50">
+                        {activeTab === 'potentialIssues' && (
+                            <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
+                                <th className="px-6 py-3">Name / Key</th>
+                                <th className="px-6 py-3">Type</th>
+                                <th className="px-6 py-3">AI Category</th>
+                                <th className="px-6 py-3">DB Category</th>
+                                <th className="px-6 py-3">OneTrust Category</th>
+                                <th className="px-6 py-3">Issue Type</th>
+                                <th className="px-6 py-3">Pages Found</th>
+                            </tr>
+                        )}
+                        {activeTab === 'cookies' && (
+                            <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
+                                <th className="px-6 py-3">Cookie Name</th>
+                                <th className="px-6 py-3">Party</th>
+                                <th className="px-6 py-3">AI Category</th>
+                                <th className="px-6 py-3">DB Category</th>
+                                <th className="px-6 py-3">OneTrust Category</th>
+                                <th className="px-6 py-3">Compliance Status</th>
+                                <th className="px-6 py-3">Pages Found</th>
+                            </tr>
+                        )}
+                        {activeTab === 'trackers' && (
+                             <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
+                                <th className="px-6 py-3">Tracker Hostname</th><th className="px-6 py-3">Category</th><th className="px-6 py-3">Compliance Status</th><th className="px-6 py-3">Pages Found</th>
+                            </tr>
+                        )}
+                        {activeTab === 'storage' && (
+                             <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
+                                <th className="px-6 py-3">Storage Key</th><th className="px-6 py-3">Origin</th><th className="px-6 py-3">Category</th><th className="px-6 py-3">Compliance Status</th><th className="px-6 py-3">Pages Found</th>
+                            </tr>
+                        )}
+                        {activeTab === 'domains' && (
+                            <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
+                                <th className="px-6 py-3">Hostname</th><th className="px-6 py-3">Request Count</th>
+                            </tr>
+                        )}
+                        {activeTab === 'pages' && (
+                             <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase"><th className="px-6 py-3">Scanned URL</th></tr>
+                        )}
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-primary)]">
+                        {paginatedData.map((item: any) => {
+                           if (activeTab === 'potentialIssues') {
+                                const issue = item as (CookieInfo & {itemType: 'Cookie'}) | (TrackerInfo & {itemType: 'Tracker'}) | (LocalStorageInfo & {itemType: 'Storage'});
+                                const { text } = getComplianceStyle(issue.complianceStatus);
+                                let name = '';
+                                if(issue.itemType === 'Cookie') name = issue.name;
+                                if(issue.itemType === 'Tracker') name = issue.hostname;
+                                if(issue.itemType === 'Storage') name = issue.storageKey;
+                                return (
+                                    <tr key={issue.key} onClick={() => setSelectedItem(issue)} className="hover:bg-[var(--bg-tertiary)] cursor-pointer">
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{ name }</td>
+                                        <td className="px-6 py-4 text-sm">{issue.itemType}</td>
+                                        <td className="px-6 py-4 text-sm">{issue.category}</td>
+                                        <td className="px-6 py-4 text-sm">{issue.itemType === 'Cookie' ? (issue as CookieInfo).databaseClassification || 'N/A' : 'N/A'}</td>
+                                        <td className="px-6 py-4 text-sm">{issue.itemType === 'Cookie' ? (issue as CookieInfo).oneTrustClassification || 'N/A' : 'N/A'}</td>
+                                        <td className={`px-6 py-4 text-sm font-medium ${text}`}>{issue.complianceStatus}</td>
+                                        <td className="px-6 py-4 text-sm text-center">{issue.pagesFound.length}</td>
+                                    </tr>
+                                );
+                           }
+                           if (activeTab === 'cookies') {
+                                const cookie = item as CookieInfo;
+                                const { text } = getComplianceStyle(cookie.complianceStatus);
+                                return (
+                                    <tr key={cookie.key} onClick={() => setSelectedItem(cookie)} className="hover:bg-[var(--bg-tertiary)] cursor-pointer">
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{cookie.name}</td>
+                                        <td className="px-6 py-4 text-sm">
+                                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
+                                                cookie.party === 'First' 
+                                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300' 
+                                                : 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'
+                                            }`}>
+                                                {cookie.party} Party
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm">{cookie.category}</td>
+                                        <td className="px-6 py-4 text-sm">{cookie.databaseClassification || 'N/A'}</td>
+                                        <td className="px-6 py-4 text-sm">{cookie.oneTrustClassification || 'N/A'}</td>
+                                        <td className={`px-6 py-4 text-sm font-medium ${text}`}>{cookie.complianceStatus}</td>
+                                        <td className="px-6 py-4 text-sm text-center">{cookie.pagesFound.length}</td>
+                                    </tr>
+                                );
+                            }
+                            if (activeTab === 'trackers') {
+                                const tracker = item as TrackerInfo;
+                                const { text } = getComplianceStyle(tracker.complianceStatus);
+                                return (
+                                    <tr key={tracker.key} onClick={() => setSelectedItem(tracker)} className="hover:bg-[var(--bg-tertiary)] cursor-pointer">
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{tracker.hostname}</td>
+                                        <td className="px-6 py-4 text-sm">{tracker.category}</td>
+                                        <td className={`px-6 py-4 text-sm font-medium ${text}`}>{tracker.complianceStatus}</td>
+                                        <td className="px-6 py-4 text-sm text-center">{tracker.pagesFound.length}</td>
+                                    </tr>
+                                );
+                            }
+                            if (activeTab === 'storage') {
+                                const storage = item as LocalStorageInfo;
+                                const { text } = getComplianceStyle(storage.complianceStatus);
+                                return (
+                                    <tr key={storage.key} onClick={() => setSelectedItem(storage)} className="hover:bg-[var(--bg-tertiary)] cursor-pointer">
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)] max-w-xs truncate">{storage.storageKey}</td>
+                                        <td className="px-6 py-4 text-sm max-w-xs truncate">{storage.origin}</td>
+                                        <td className="px-6 py-4 text-sm">{storage.category}</td>
+                                        <td className={`px-6 py-4 text-sm font-medium ${text}`}>{storage.complianceStatus}</td>
+                                        <td className="px-6 py-4 text-sm text-center">{storage.pagesFound.length}</td>
+                                    </tr>
+                                );
+                            }
+                            if (activeTab === 'domains') {
+                                return (
+                                    <tr key={item.hostname} className="hover:bg-[var(--bg-tertiary)]">
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{item.hostname}</td>
+                                        <td className="px-6 py-4 text-sm text-center">{item.count}</td>
+                                    </tr>
+                                )
+                            }
+                             if (activeTab === 'pages') {
+                                return (
+                                    <tr key={item.url} className="hover:bg-[var(--bg-tertiary)]">
+                                        <td className="px-6 py-4 text-sm font-semibold text-brand-blue"><a href={item.url} target="_blank" rel="noopener noreferrer">{item.url}</a></td>
+                                    </tr>
+                                )
+                            }
+                            return null;
+                        })}
+                    </tbody>
+                </table>
+                {paginatedData.length === 0 && <div className="text-center p-8 text-[var(--text-primary)]">No items found in this category.</div>}
+            </div>
+            {totalPages > 1 && (
+                <div className="flex items-center justify-between p-4 border-t border-[var(--border-primary)]">
+                    <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1 text-sm font-semibold rounded-md disabled:opacity-50 bg-[var(--bg-tertiary)] hover:bg-[var(--border-primary)]">Previous</button>
+                    <span className="text-sm text-[var(--text-primary)]">Page {currentPage} of {totalPages}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1 text-sm font-semibold rounded-md disabled:opacity-50 bg-[var(--bg-tertiary)] hover:bg-[var(--border-primary)]">Next</button>
+                </div>
+            )}
         </div>
       </div>
+      {selectedItem && <DetailsModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
+      {isConsentModalOpen && <ConsentV2InfoModal onClose={() => setIsConsentModalOpen(false)} />}
     </>
   );
 };
