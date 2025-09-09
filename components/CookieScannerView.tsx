@@ -59,6 +59,14 @@ export const CookieScannerView: React.FC = () => {
     try {
       // Create EventSource with explicit configuration
       eventSourceRef.current = new EventSource(scanUrl);
+      // ADD TIMEOUT RIGHT AFTER:
+      const connectionTimeout = setTimeout(() => {
+          console.log('[FRONTEND] EventSource timeout after 10 minutes');
+          setScanLogs(prev => [...prev, 'Scan is taking longer than expected but may still be processing...']);
+          
+          // Don't close connection, just warn user
+          setScanLogs(prev => [...prev, 'Large scans can take up to 10-15 minutes. Please wait...']);
+      }, 600000); // 10 minutes
       
       eventSourceRef.current.onopen = (event) => {
         console.log('[FRONTEND] EventSource connection opened successfully');
@@ -67,6 +75,7 @@ export const CookieScannerView: React.FC = () => {
       };
 
       eventSourceRef.current.onmessage = (event) => {
+        clearTimeout(connectionTimeout); 
         try {
           const data = JSON.parse(event.data);
           console.log('[FRONTEND] Received message:', data);
@@ -89,6 +98,7 @@ export const CookieScannerView: React.FC = () => {
       };
 
       eventSourceRef.current.onerror = (event) => {
+        clearTimeout(connectionTimeout);
         console.error('[FRONTEND] EventSource error:', event);
         console.error('[FRONTEND] EventSource readyState:', eventSourceRef.current?.readyState);
         console.error('[FRONTEND] EventSource url:', eventSourceRef.current?.url);
