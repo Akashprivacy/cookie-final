@@ -78,7 +78,7 @@ const DetailsModal: React.FC<{ item: CookieInfo | TrackerInfo | LocalStorageInfo
     } else {
       title = item.hostname;
       icon = <TagInventoryIcon className="h-6 w-6 text-brand-blue" />;
-    }
+    } 
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-up" onClick={onClose}>
