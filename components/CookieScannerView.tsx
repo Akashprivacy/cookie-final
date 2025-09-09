@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { URLInputForm } from './URLInputForm';
 import { ScanResultDisplay } from './ScanResultDisplay';
@@ -6,7 +5,19 @@ import { ScanningProgress } from './ScanningProgress';
 import { AlertTriangleIcon } from './Icons';
 import type { ScanResultData } from '../types';
 
-const API_BASE_URL = (window as any).API_BASE_URL;
+// FIX: Use window.location.origin since frontend and backend are on same domain
+const API_BASE_URL = (() => {
+  // Check if we're in development (localhost)
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:3001'; // Backend port in development
+  }
+  // In production, use the same origin
+  return window.location.origin;
+})();
+
+// Debug logging to verify API URL
+console.log('[FRONTEND] API_BASE_URL:', API_BASE_URL);
+console.log('[FRONTEND] Current location:', window.location.href);
 
 type ScanDepth = 'lite' | 'medium' | 'deep';
 
@@ -33,6 +44,8 @@ export const CookieScannerView: React.FC = () => {
     scanUrl.searchParams.append('url', url);
     scanUrl.searchParams.append('depth', scanDepth);
 
+    console.log('[FRONTEND] Starting scan with URL:', scanUrl.toString());
+
     eventSourceRef.current = new EventSource(scanUrl.toString());
 
     eventSourceRef.current.onmessage = (event) => {
@@ -54,10 +67,18 @@ export const CookieScannerView: React.FC = () => {
       }
     };
 
-    eventSourceRef.current.onerror = () => {
+    eventSourceRef.current.onerror = (event) => {
+      console.error('[FRONTEND] EventSource error:', event);
+      console.error('[FRONTEND] EventSource readyState:', eventSourceRef.current?.readyState);
+      console.error('[FRONTEND] API URL being used:', scanUrl.toString());
+      
       setError('A connection error occurred with the scanner service. The server might be down or busy.');
       setIsLoading(false);
       eventSourceRef.current?.close();
+    };
+
+    eventSourceRef.current.onopen = () => {
+      console.log('[FRONTEND] EventSource connection opened successfully');
     };
 
   }, [url, scanDepth]);
@@ -71,6 +92,13 @@ export const CookieScannerView: React.FC = () => {
   return (
     <>
       <div className="max-w-3xl mx-auto mt-6 space-y-6">
+        {/* Debug info - remove this in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-sm">
+            <strong>Debug:</strong> API_BASE_URL = {API_BASE_URL}
+          </div>
+        )}
+        
         <URLInputForm
           url={url}
           setUrl={setUrl}
@@ -114,6 +142,15 @@ export const CookieScannerView: React.FC = () => {
             <div>
               <p className="font-bold text-red-800 dark:text-red-200">Scan Error</p>
               <p className="text-sm">{error}</p>
+              {/* Debug info for troubleshooting */}
+              <details className="mt-2 text-xs opacity-75">
+                <summary className="cursor-pointer">Debug Info</summary>
+                <div className="mt-1 space-y-1">
+                  <div>API Base URL: {API_BASE_URL}</div>
+                  <div>Current Location: {window.location.href}</div>
+                  <div>Hostname: {window.location.hostname}</div>
+                </div>
+              </details>
             </div>
           </div>
         )}
