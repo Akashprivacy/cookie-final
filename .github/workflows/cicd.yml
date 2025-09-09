@@ -87,9 +87,9 @@ jobs:
             --allow-unauthenticated \
             --port=8080 \
             --memory=2Gi \
-            --cpu=2 \
-            --timeout=300 \
-            --concurrency=5 \
+            --cpu=1 \
+            --timeout=600 \
+            --concurrency=40 \
             --min-instances=0 \
             --max-instances=10 \
             --set-env-vars="NODE_ENV=production,API_KEY=${{ secrets.API_KEY }}" \
