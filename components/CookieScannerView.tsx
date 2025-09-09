@@ -148,7 +148,7 @@ export const CookieScannerView: React.FC = () => {
   const testBackendConnectivity = useCallback(async (): Promise<boolean> => {
     try {
       console.log('[FRONTEND] Testing backend connectivity...');
-      const testUrl = `${API_BASE_URL}/api/health`;
+      const testUrl = `${API_BASE_URL}/health`;
       
       const response = await fetch(testUrl, {
         method: 'GET',
