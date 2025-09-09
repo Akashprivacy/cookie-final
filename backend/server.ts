@@ -852,6 +852,12 @@ app.get('/api/scan', async (req: Request, res: Response) => {
         sendEvent({ type: 'log', message: `Crawl complete. Found ${allCookieMap.size} unique cookies, ${allNetworkRequestMap.size} third-party requests, and ${allLocalStorageMap.size} storage items.` });
         sendEvent({ type: 'log', message: `Submitting all findings to AI for analysis... (This may take a moment)` });
 
+        const keepAliveInterval = setInterval(() => {
+            sendEvent({ type: 'log', message: 'AI analysis in progress... (keeping connection alive)' });
+        }, 25000); // Every 25 seconds
+        
+        try {
+
         // ENHANCED AI ANALYSIS WITH DEBUGGING
         console.log(`[AI] Starting AI analysis with API key present: ${!!process.env.API_KEY}`);
 
@@ -1217,6 +1223,11 @@ Return ONLY the valid JSON object.`;
             console.error('[AI] Compliance analysis failed:', complianceError);
             sendEvent({ type: 'error', message: 'Final compliance analysis failed. Partial results may be available.' });
         }
+
+    } finally {
+        // Clear the keep-alive interval
+        clearInterval(keepAliveInterval);
+    }
 
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
