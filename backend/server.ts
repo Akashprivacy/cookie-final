@@ -19,7 +19,91 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
+// Load environment variables
+console.log('[STARTUP] Loading environment variables...');
 dotenv.config();
+
+// ============================================================================
+// ENHANCED API KEY DEBUGGING AND VALIDATION
+// ============================================================================
+
+console.log('[STARTUP] ='.repeat(50));
+console.log('[STARTUP] COOKIE CARE SERVER STARTUP');
+console.log('[STARTUP] ='.repeat(50));
+
+console.log('[STARTUP] Environment check:');
+console.log('[STARTUP] NODE_ENV:', process.env.NODE_ENV || 'undefined');
+console.log('[STARTUP] PORT:', process.env.PORT || 'undefined');
+console.log('[STARTUP] Current working directory:', process.cwd());
+
+// API Key validation with detailed debugging
+const apiKey = process.env.API_KEY;
+console.log('[STARTUP] API_KEY environment variable analysis:');
+console.log('[STARTUP] - Present:', !!apiKey);
+console.log('[STARTUP] - Type:', typeof apiKey);
+console.log('[STARTUP] - Length:', apiKey ? apiKey.length : 0);
+console.log('[STARTUP] - Starts with AIza:', apiKey ? apiKey.startsWith('AIza') : false);
+console.log('[STARTUP] - First 8 chars:', apiKey ? apiKey.substring(0, 8) + '...' : 'N/A');
+console.log('[STARTUP] - Last 4 chars:', apiKey ? '...' + apiKey.slice(-4) : 'N/A');
+
+// List all environment variables containing "API" or "KEY" for debugging
+const relevantEnvVars = Object.keys(process.env).filter(key => 
+  key.toUpperCase().includes('API') || key.toUpperCase().includes('KEY')
+);
+console.log('[STARTUP] Environment variables containing API/KEY:', relevantEnvVars);
+
+// List first 20 environment variables for debugging
+const allEnvKeys = Object.keys(process.env).slice(0, 20);
+console.log('[STARTUP] First 20 environment variables:', allEnvKeys);
+
+// Enhanced API key validation
+if (!apiKey) {
+    console.error('[FATAL] API_KEY environment variable is not set.');
+    console.error('[FATAL] This is required for the Google Gemini AI functionality.');
+    console.error('[FATAL] In production, ensure the API_KEY is set in your Cloud Run environment.');
+    console.error('[FATAL] In development, create a .env file with API_KEY=your_key_here');
+    process.exit(1);
+}
+
+if (typeof apiKey !== 'string') {
+    console.error('[FATAL] API_KEY is not a string. Type:', typeof apiKey);
+    console.error('[FATAL] Value:', apiKey);
+    process.exit(1);
+}
+
+if (apiKey.length < 20) {
+    console.error('[FATAL] API_KEY appears to be too short:', apiKey.length, 'characters');
+    console.error('[FATAL] Google AI API keys are typically 39+ characters long');
+    process.exit(1);
+}
+
+if (!apiKey.startsWith('AIza')) {
+    console.warn('[WARNING] API_KEY does not start with "AIza"');
+    console.warn('[WARNING] This may not be a valid Google AI API key');
+    console.warn('[WARNING] Google AI API keys typically start with "AIza"');
+}
+
+// Test API key initialization with better error handling
+let ai: GoogleGenAI;
+try {
+    console.log('[STARTUP] Initializing Google AI client...');
+    ai = new GoogleGenAI({ apiKey: apiKey });
+    console.log('[STARTUP] ✅ Google AI client initialized successfully');
+} catch (error) {
+    console.error('[FATAL] Failed to initialize Google AI client:', error);
+    if (error instanceof Error) {
+        console.error('[FATAL] Error message:', error.message);
+        console.error('[FATAL] Error stack:', error.stack);
+    }
+    process.exit(1);
+}
+
+const model = "gemini-2.5-flash";
+console.log('[STARTUP] Using model:', model);
+
+// ============================================================================
+// EXPRESS APP SETUP
+// ============================================================================
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +111,7 @@ const app: express.Application = express();
 
 // GCP Cloud Run uses PORT environment variable, fallback to 3001 for local development
 const port = process.env.PORT || 3001;
+console.log('[STARTUP] Server will run on port:', port);
 
 // CORS configuration for GCP deployment
 const corsOptions = {
@@ -49,9 +134,115 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 
-// Health check endpoint for GCP
-app.get('/health', (req: Request, res: Response) => {
-    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+console.log('[STARTUP] Express middleware configured');
+
+// ============================================================================
+// API CONNECTION TEST FUNCTION
+// ============================================================================
+
+const testApiConnection = async (): Promise<void> => {
+    try {
+        console.log('[STARTUP] Testing API connection...');
+        const testResult = await ai.models.generateContent({
+            model,
+            contents: [{ parts: [{ text: "Test connection - respond with 'API CONNECTION OK'" }] }]
+        });
+        
+        if (testResult.text) {
+            console.log('[STARTUP] ✅ API connection test successful');
+            console.log('[STARTUP] API Response:', testResult.text.substring(0, 100) + '...');
+        } else {
+            console.warn('[STARTUP] ⚠️ API connection test returned empty response');
+        }
+    } catch (error) {
+        console.error('[STARTUP] ❌ API connection test failed:', error instanceof Error ? error.message : error);
+        console.error('[STARTUP] This may cause scan functionality to fail');
+        // Don't exit here - let the app start but log the error
+    }
+};
+
+// ============================================================================
+// DEBUG AND HEALTH ENDPOINTS
+// ============================================================================
+
+// Enhanced health check that includes API status
+app.get('/health', async (req: Request, res: Response) => {
+    const hasApiKey = !!process.env.API_KEY;
+    
+    // Quick API test (with timeout)
+    let apiStatus = 'unknown';
+    try {
+        const testPromise = ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [{ parts: [{ text: "ping" }] }]
+        });
+        
+        // 5 second timeout
+        const timeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('API test timeout')), 5000)
+        );
+        
+        await Promise.race([testPromise, timeoutPromise]);
+        apiStatus = 'working';
+    } catch (error) {
+        apiStatus = 'failed: ' + (error instanceof Error ? error.message : String(error));
+    }
+    
+    const isHealthy = hasApiKey && apiStatus === 'working';
+    
+    res.status(isHealthy ? 200 : 503).json({ 
+        status: isHealthy ? 'healthy' : 'unhealthy',
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV,
+        apiKeyPresent: hasApiKey,
+        apiStatus: apiStatus,
+        port: port,
+        model: model
+    });
+});
+
+// API key status endpoint
+app.get('/debug-api-status', (req: Request, res: Response) => {
+    res.json({
+        environment: process.env.NODE_ENV,
+        apiKeyPresent: !!process.env.API_KEY,
+        apiKeyLength: process.env.API_KEY ? process.env.API_KEY.length : 0,
+        apiKeyPrefix: process.env.API_KEY ? process.env.API_KEY.substring(0, 8) + '...' : 'Not set',
+        apiKeyValidFormat: process.env.API_KEY ? process.env.API_KEY.startsWith('AIza') : false,
+        modelName: model,
+        timestamp: new Date().toISOString(),
+        relevantEnvVars: Object.keys(process.env).filter(key => 
+            key.toUpperCase().includes('API') || key.toUpperCase().includes('KEY')
+        )
+    });
+});
+
+// Test API key endpoint
+app.get('/test-api-key', async (req: Request, res: Response) => {
+    try {
+        console.log('[API-TEST] Testing API key functionality...');
+        const testResult = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [{ parts: [{ text: "Respond with 'API key working correctly' to confirm connection." }] }]
+        });
+        
+        console.log('[API-TEST] ✅ API test successful');
+        res.json({
+            success: true,
+            message: 'API key is working',
+            response: testResult.text,
+            model: model,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[API-TEST] ❌ API test failed:', error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+            details: error,
+            timestamp: new Date().toISOString()
+        });
+    }
 });
 
 app.get('/debug-routes', (req: Request, res: Response) => {
@@ -82,7 +273,8 @@ app.get('/debug-routes', (req: Request, res: Response) => {
         cwd: process.cwd(),
         filename: __filename,
         dirname: __dirname,
-        routes
+        routes,
+        apiKeyStatus: !!process.env.API_KEY
     });
 });
 
@@ -93,13 +285,9 @@ if (process.env.NODE_ENV === 'production') {
     app.use(express.static(staticPath));
 }
 
-if (!process.env.API_KEY) {
-    console.error("FATAL ERROR: API_KEY environment variable is not set.");
-    process.exit(1);
-}
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const model = "gemini-2.5-flash";
+// ============================================================================
+// HELPER FUNCTIONS AND DATA STRUCTURES
+// ============================================================================
 
 // --- In-Memory Storage ---
 const templateLibrary = new Map<string, ContractTemplate>();
@@ -409,6 +597,9 @@ const normalizeUrlPath = (path: string): string => {
         .replace(/\/[a-zA-Z0-9-]{20,}/g, '/[slug]');
 };
 
+// ============================================================================
+// API ROUTES
+// ============================================================================
 
 // FIX: Use explicit `express.Request` and `express.Response` types for route handlers.
 app.get('/api/scan', async (req: Request, res: Response) => {
@@ -440,6 +631,8 @@ app.get('/api/scan', async (req: Request, res: Response) => {
     }
 
     console.log(`[SERVER] Received scan request for: ${url}`);
+    console.log(`[SERVER] API key status: ${!!process.env.API_KEY ? 'Present' : 'Missing'}`);
+    
     let browser: Browser | null = null;
     // FIX: Wrap main browser session in a try/finally to guarantee it closes, preventing file lock errors.
     try {
@@ -659,6 +852,9 @@ app.get('/api/scan', async (req: Request, res: Response) => {
         sendEvent({ type: 'log', message: `Crawl complete. Found ${allCookieMap.size} unique cookies, ${allNetworkRequestMap.size} third-party requests, and ${allLocalStorageMap.size} storage items.` });
         sendEvent({ type: 'log', message: `Submitting all findings to AI for analysis... (This may take a moment)` });
 
+        // ENHANCED AI ANALYSIS WITH DEBUGGING
+        console.log(`[AI] Starting AI analysis with API key present: ${!!process.env.API_KEY}`);
+
         const allItemsToAnalyze = [
             ...Array.from(allCookieMap.values()).map(value => ({ type: 'cookie', data: value })),
             ...Array.from(allNetworkRequestMap.values()).map(value => ({ type: 'network_request', data: value })),
@@ -688,6 +884,8 @@ app.get('/api/scan', async (req: Request, res: Response) => {
         }
 
         const analyzeBatch = async (batch: any[], batchNum: number, maxRetries = 2): Promise<any[]> => {
+            console.log(`[AI] Processing batch ${batchNum + 1}/${batches.length} with ${batch.length} items`);
+            
             // FIX: Use a map to correlate short keys sent to the AI with the original, potentially long keys (e.g., URLs).
             const keyMap = new Map<string, string>();
             const itemsForBatchAnalysis = batch.map((item, index) => {
@@ -755,7 +953,13 @@ app.get('/api/scan', async (req: Request, res: Response) => {
 
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
-                    const result = await ai.models.generateContent({ model, contents: [{ parts: [{ text: batchPrompt }] }], config: { responseMimeType: "application/json", responseSchema: batchResponseSchema } });
+                    console.log(`[AI] Batch ${batchNum + 1} attempt ${attempt + 1}/${maxRetries + 1}`);
+                    
+                    const result = await ai.models.generateContent({ 
+                        model, 
+                        contents: [{ parts: [{ text: batchPrompt }] }], 
+                        config: { responseMimeType: "application/json", responseSchema: batchResponseSchema } 
+                    });
 
                     if (result.promptFeedback?.blockReason) {
                         const blockReason = result.promptFeedback.blockReason;
@@ -778,6 +982,8 @@ app.get('/api/scan', async (req: Request, res: Response) => {
 
                     try {
                         const analysisResults = JSON.parse(cleanedJsonString);
+                        console.log(`[AI] Batch ${batchNum + 1} completed successfully with ${analysisResults.length} results`);
+                        
                         // Map the short keys back to their original long keys before returning.
                         return analysisResults.map((res: any) => {
                             if (keyMap.has(res.key)) {
@@ -787,7 +993,7 @@ app.get('/api/scan', async (req: Request, res: Response) => {
                             return res;
                         });
                     } catch (jsonError) {
-                        console.error(`[AI] Failed to parse JSON on batch ${batchNum + 1}. Content received:`, cleanedJsonString);
+                        console.error(`[AI] Failed to parse JSON on batch ${batchNum + 1}. Content received:`, cleanedJsonString.substring(0, 200));
                         throw new Error(`Invalid JSON response from AI on batch ${batchNum + 1}.`);
                     }
                 } catch(error) {
@@ -808,8 +1014,20 @@ app.get('/api/scan', async (req: Request, res: Response) => {
         const aggregatedAnalysis: any[] = [];
         for (const [index, batch] of batches.entries()) {
             sendEvent({ type: 'log', message: `Analyzing batch ${index + 1}/${batches.length}...` });
-            const batchAnalysis = await analyzeBatch(batch, index);
-            aggregatedAnalysis.push(...batchAnalysis);
+            try {
+                const batchAnalysis = await analyzeBatch(batch, index);
+                aggregatedAnalysis.push(...batchAnalysis);
+            } catch (error) {
+                console.error(`[AI] Batch ${index + 1} failed completely:`, error);
+                sendEvent({ type: 'log', message: `Warning: AI analysis batch ${index + 1} failed. Continuing with remaining batches.` });
+                // Continue with other batches
+            }
+        }
+
+        if (aggregatedAnalysis.length === 0) {
+            console.error('[AI] All AI analysis batches failed');
+            sendEvent({ type: 'error', message: 'AI analysis failed completely. Please check your API key and try again.' });
+            return;
         }
 
         sendEvent({ type: 'log', message: 'Finalizing compliance assessment...' });
@@ -824,178 +1042,197 @@ For both GDPR and CCPA, provide:
 - assessment: A brief summary explaining the risk level. Mention the number of violations.
 Return ONLY the valid JSON object.`;
         const complianceSchema = { type: Type.OBJECT, properties: { gdpr: { type: Type.OBJECT, properties: { riskLevel: { type: Type.STRING }, assessment: { type: Type.STRING } } }, ccpa: { type: Type.OBJECT, properties: { riskLevel: { type: Type.STRING }, assessment: { type: Type.STRING } } } }, required: ['gdpr', 'ccpa'] };
-        const complianceResult = await ai.models.generateContent({ model, contents: [{ parts: [{ text: compliancePrompt }] }], config: { responseMimeType: "application/json", responseSchema: complianceSchema } });
+        
+        try {
+            const complianceResult = await ai.models.generateContent({ model, contents: [{ parts: [{ text: compliancePrompt }] }], config: { responseMimeType: "application/json", responseSchema: complianceSchema } });
 
-        const complianceResultText = complianceResult.text;
-        if (!complianceResultText) {
-            throw new Error('Gemini API returned an empty response for the final compliance analysis.');
+            const complianceResultText = complianceResult.text;
+            if (!complianceResultText) {
+                throw new Error('Gemini API returned an empty response for the final compliance analysis.');
+            }
+            const complianceAnalysis = JSON.parse(complianceResultText);
+
+            const analysisMap = new Map(aggregatedAnalysis.map((item: any) => [item.key, item]));
+            const scannedUrlHostname = new URL(url).hostname;
+
+            const uniqueCookies: CookieInfo[] = Array.from(allCookieMap.values()).map(c => {
+                const key = `${c.data.name}|${c.data.domain}|${c.data.path}`;
+                const analyzed = analysisMap.get(key);
+                const databaseEntry = findCookieInDatabase(c.data.name);
+                const oneTrustCat = oneTrustClassifications.get(c.data.name);
+                const domain = c.data.domain.startsWith('.') ? c.data.domain : `.${c.data.domain}`;
+                const rootDomain = `.${scannedUrlHostname.replace(/^www\./, '')}`;
+
+                const aiCategory = analyzed?.category || CookieCategory.UNKNOWN;
+                const dbCategory = databaseEntry?.category;
+                const otCategory = oneTrustCat;
+
+                const isConsideredNecessary =
+                    (aiCategory === CookieCategory.NECESSARY || aiCategory === CookieCategory.UNKNOWN) &&
+                    (!dbCategory || dbCategory.toLowerCase() === 'necessary' || dbCategory.toLowerCase() === 'functional') &&
+                    (!otCategory || otCategory.toLowerCase().includes('necessary') || otCategory.toLowerCase().includes('strictly') || otCategory.toLowerCase().includes('essential'));
+
+                let finalComplianceStatus: ComplianceStatus = ComplianceStatus.COMPLIANT;
+                if (!isConsideredNecessary) {
+                    if (c.states.has('pre-consent')) {
+                        finalComplianceStatus = ComplianceStatus.PRE_CONSENT_VIOLATION;
+                    } else if (c.states.has('post-rejection')) {
+                        finalComplianceStatus = ComplianceStatus.POST_REJECTION_VIOLATION;
+                    }
+                }
+
+                const originalRemediation = analyzed?.remediation || 'Analysis incomplete.';
+                let finalRemediation = originalRemediation;
+                if (finalComplianceStatus === ComplianceStatus.PRE_CONSENT_VIOLATION) {
+                     finalRemediation = `This ${aiCategory} item was detected before user consent was given. Configure your consent management platform to block this script/cookie until the user explicitly opts in.`;
+                } else if (finalComplianceStatus === ComplianceStatus.POST_REJECTION_VIOLATION) {
+                     finalRemediation = `This ${aiCategory} item was detected after the user rejected consent. This technology should not be loaded when consent is denied. Check your tag manager triggers and script configurations.`;
+                } else if (finalComplianceStatus === ComplianceStatus.COMPLIANT) {
+                    finalRemediation = "No action needed.";
+                }
+
+                return {
+                    key, name: c.data.name, provider: c.data.domain, expiry: getHumanReadableExpiry(c.data),
+                    party: domain.endsWith(rootDomain) ? 'First' : 'Third',
+                    isHttpOnly: c.data.httpOnly, isSecure: c.data.secure,
+                    complianceStatus: finalComplianceStatus,
+                    category: aiCategory,
+                    purpose: analyzed?.purpose || 'No purpose determined.',
+                    remediation: finalRemediation,
+                    pagesFound: Array.from(c.pageUrls),
+                    databaseClassification: dbCategory || undefined,
+                    oneTrustClassification: otCategory || undefined,
+                };
+            });
+
+            const analyzedTrackersWithInfo: (TrackerInfo & { key: string })[] = [];
+            Array.from(allNetworkRequestMap.values()).forEach(req => {
+                const key = req.data.url;
+                const analyzed = analysisMap.get(key);
+                if (analyzed && analyzed.isTracker) {
+                    analyzedTrackersWithInfo.push({
+                        key, // the full url
+                        hostname: req.data.hostname,
+                        complianceStatus: (analyzed.complianceStatus as ComplianceStatus) || ComplianceStatus.UNKNOWN,
+                        category: analyzed.category || CookieCategory.UNKNOWN,
+                        remediation: analyzed.remediation || 'Analysis incomplete.',
+                        pagesFound: Array.from(req.pageUrls),
+                    });
+                }
+            });
+
+            const groupedTrackersMap = new Map<string, TrackerInfo>();
+            const complianceSeverity: Record<string, number> = {
+                [ComplianceStatus.PRE_CONSENT_VIOLATION]: 3,
+                [ComplianceStatus.POST_REJECTION_VIOLATION]: 2,
+                [ComplianceStatus.COMPLIANT]: 1,
+                [ComplianceStatus.UNKNOWN]: 0,
+            };
+
+            analyzedTrackersWithInfo.forEach(tracker => {
+                const existing = groupedTrackersMap.get(tracker.hostname);
+                if (!existing) {
+                    groupedTrackersMap.set(tracker.hostname, {
+                        key: tracker.hostname,
+                        hostname: tracker.hostname,
+                        category: tracker.category,
+                        complianceStatus: tracker.complianceStatus,
+                        remediation: tracker.remediation,
+                        pagesFound: [...tracker.pagesFound],
+                    });
+                } else {
+                    const combinedPages = new Set([...existing.pagesFound, ...tracker.pagesFound]);
+                    existing.pagesFound = Array.from(combinedPages);
+
+                    const existingSeverity = complianceSeverity[existing.complianceStatus as ComplianceStatus] || 0;
+                    const newSeverity = complianceSeverity[tracker.complianceStatus as ComplianceStatus] || 0;
+
+                    if (newSeverity > existingSeverity) {
+                        existing.complianceStatus = tracker.complianceStatus;
+                        existing.remediation = tracker.remediation;
+                    }
+                }
+            });
+
+            const uniqueTrackers: TrackerInfo[] = Array.from(groupedTrackersMap.values());
+
+            const uniqueLocalStorage: LocalStorageInfo[] = Array.from(allLocalStorageMap.values()).map(s => {
+                const key = `${s.data.origin}|${s.data.key}`;
+                const analyzed = analysisMap.get(key);
+                return {
+                    key,
+                    origin: s.data.origin,
+                    storageKey: s.data.key,
+                    complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
+                    category: analyzed?.category || CookieCategory.UNKNOWN,
+                    remediation: analyzed?.remediation || 'Analysis incomplete.',
+                    purpose: analyzed?.purpose || 'No purpose determined.',
+                    pagesFound: Array.from(s.pageUrls),
+                };
+            });
+
+            const thirdPartyDomainsMap = new Map<string, Set<string>>();
+            allNetworkRequestMap.forEach(req => {
+                if (!thirdPartyDomainsMap.has(req.data.hostname)) {
+                    thirdPartyDomainsMap.set(req.data.hostname, new Set());
+                }
+                const pages = thirdPartyDomainsMap.get(req.data.hostname);
+                req.pageUrls.forEach((p: string) => pages!.add(p));
+            });
+
+            const thirdPartyDomains = Array.from(thirdPartyDomainsMap.entries()).map(([hostname, pageSet]) => ({
+                hostname,
+                count: pageSet.size,
+                pagesFound: Array.from(pageSet)
+            }));
+
+            sendEvent({ type: 'result', payload: {
+                uniqueCookies,
+                uniqueTrackers,
+                uniqueLocalStorage,
+                thirdPartyDomains,
+                pages: Array.from(visitedUrls).map(u => ({ url: u })),
+                compliance: complianceAnalysis,
+                screenshotBase64,
+                consentBannerDetected: consentBannerFound,
+                cookiePolicyDetected,
+                pagesScannedCount: visitedUrls.size,
+                googleConsentV2: googleConsentV2Status,
+                cmpProvider,
+            }});
+
+        } catch (complianceError) {
+            console.error('[AI] Compliance analysis failed:', complianceError);
+            sendEvent({ type: 'error', message: 'Final compliance analysis failed. Partial results may be available.' });
         }
-        const complianceAnalysis = JSON.parse(complianceResultText);
-
-        const analysisMap = new Map(aggregatedAnalysis.map((item: any) => [item.key, item]));
-        const scannedUrlHostname = new URL(url).hostname;
-
-        const uniqueCookies: CookieInfo[] = Array.from(allCookieMap.values()).map(c => {
-            const key = `${c.data.name}|${c.data.domain}|${c.data.path}`;
-            const analyzed = analysisMap.get(key);
-            const databaseEntry = findCookieInDatabase(c.data.name);
-            const oneTrustCat = oneTrustClassifications.get(c.data.name);
-            const domain = c.data.domain.startsWith('.') ? c.data.domain : `.${c.data.domain}`;
-            const rootDomain = `.${scannedUrlHostname.replace(/^www\./, '')}`;
-
-            const aiCategory = analyzed?.category || CookieCategory.UNKNOWN;
-            const dbCategory = databaseEntry?.category;
-            const otCategory = oneTrustCat;
-
-            const isConsideredNecessary =
-                (aiCategory === CookieCategory.NECESSARY || aiCategory === CookieCategory.UNKNOWN) &&
-                (!dbCategory || dbCategory.toLowerCase() === 'necessary' || dbCategory.toLowerCase() === 'functional') &&
-                (!otCategory || otCategory.toLowerCase().includes('necessary') || otCategory.toLowerCase().includes('strictly') || otCategory.toLowerCase().includes('essential'));
-
-            let finalComplianceStatus: ComplianceStatus = ComplianceStatus.COMPLIANT;
-            if (!isConsideredNecessary) {
-                if (c.states.has('pre-consent')) {
-                    finalComplianceStatus = ComplianceStatus.PRE_CONSENT_VIOLATION;
-                } else if (c.states.has('post-rejection')) {
-                    finalComplianceStatus = ComplianceStatus.POST_REJECTION_VIOLATION;
-                }
-            }
-
-            const originalRemediation = analyzed?.remediation || 'Analysis incomplete.';
-            let finalRemediation = originalRemediation;
-            if (finalComplianceStatus === ComplianceStatus.PRE_CONSENT_VIOLATION) {
-                 finalRemediation = `This ${aiCategory} item was detected before user consent was given. Configure your consent management platform to block this script/cookie until the user explicitly opts in.`;
-            } else if (finalComplianceStatus === ComplianceStatus.POST_REJECTION_VIOLATION) {
-                 finalRemediation = `This ${aiCategory} item was detected after the user rejected consent. This technology should not be loaded when consent is denied. Check your tag manager triggers and script configurations.`;
-            } else if (finalComplianceStatus === ComplianceStatus.COMPLIANT) {
-                finalRemediation = "No action needed.";
-            }
-
-            return {
-                key, name: c.data.name, provider: c.data.domain, expiry: getHumanReadableExpiry(c.data),
-                party: domain.endsWith(rootDomain) ? 'First' : 'Third',
-                isHttpOnly: c.data.httpOnly, isSecure: c.data.secure,
-                complianceStatus: finalComplianceStatus,
-                category: aiCategory,
-                purpose: analyzed?.purpose || 'No purpose determined.',
-                remediation: finalRemediation,
-                pagesFound: Array.from(c.pageUrls),
-                databaseClassification: dbCategory || undefined,
-                oneTrustClassification: otCategory || undefined,
-            };
-        });
-
-        const analyzedTrackersWithInfo: (TrackerInfo & { key: string })[] = [];
-        Array.from(allNetworkRequestMap.values()).forEach(req => {
-            const key = req.data.url;
-            const analyzed = analysisMap.get(key);
-            if (analyzed && analyzed.isTracker) {
-                analyzedTrackersWithInfo.push({
-                    key, // the full url
-                    hostname: req.data.hostname,
-                    complianceStatus: (analyzed.complianceStatus as ComplianceStatus) || ComplianceStatus.UNKNOWN,
-                    category: analyzed.category || CookieCategory.UNKNOWN,
-                    remediation: analyzed.remediation || 'Analysis incomplete.',
-                    pagesFound: Array.from(req.pageUrls),
-                });
-            }
-        });
-
-        const groupedTrackersMap = new Map<string, TrackerInfo>();
-        const complianceSeverity: Record<string, number> = {
-            [ComplianceStatus.PRE_CONSENT_VIOLATION]: 3,
-            [ComplianceStatus.POST_REJECTION_VIOLATION]: 2,
-            [ComplianceStatus.COMPLIANT]: 1,
-            [ComplianceStatus.UNKNOWN]: 0,
-        };
-
-        analyzedTrackersWithInfo.forEach(tracker => {
-            const existing = groupedTrackersMap.get(tracker.hostname);
-            if (!existing) {
-                groupedTrackersMap.set(tracker.hostname, {
-                    key: tracker.hostname,
-                    hostname: tracker.hostname,
-                    category: tracker.category,
-                    complianceStatus: tracker.complianceStatus,
-                    remediation: tracker.remediation,
-                    pagesFound: [...tracker.pagesFound],
-                });
-            } else {
-                const combinedPages = new Set([...existing.pagesFound, ...tracker.pagesFound]);
-                existing.pagesFound = Array.from(combinedPages);
-
-                const existingSeverity = complianceSeverity[existing.complianceStatus as ComplianceStatus] || 0;
-                const newSeverity = complianceSeverity[tracker.complianceStatus as ComplianceStatus] || 0;
-
-                if (newSeverity > existingSeverity) {
-                    existing.complianceStatus = tracker.complianceStatus;
-                    existing.remediation = tracker.remediation;
-                }
-            }
-        });
-
-        const uniqueTrackers: TrackerInfo[] = Array.from(groupedTrackersMap.values());
-
-        const uniqueLocalStorage: LocalStorageInfo[] = Array.from(allLocalStorageMap.values()).map(s => {
-            const key = `${s.data.origin}|${s.data.key}`;
-            const analyzed = analysisMap.get(key);
-            return {
-                key,
-                origin: s.data.origin,
-                storageKey: s.data.key,
-                complianceStatus: analyzed?.complianceStatus || ComplianceStatus.UNKNOWN,
-                category: analyzed?.category || CookieCategory.UNKNOWN,
-                remediation: analyzed?.remediation || 'Analysis incomplete.',
-                purpose: analyzed?.purpose || 'No purpose determined.',
-                pagesFound: Array.from(s.pageUrls),
-            };
-        });
-
-        const thirdPartyDomainsMap = new Map<string, Set<string>>();
-        allNetworkRequestMap.forEach(req => {
-            if (!thirdPartyDomainsMap.has(req.data.hostname)) {
-                thirdPartyDomainsMap.set(req.data.hostname, new Set());
-            }
-            const pages = thirdPartyDomainsMap.get(req.data.hostname);
-            req.pageUrls.forEach((p: string) => pages!.add(p));
-        });
-
-        const thirdPartyDomains = Array.from(thirdPartyDomainsMap.entries()).map(([hostname, pageSet]) => ({
-            hostname,
-            count: pageSet.size,
-            pagesFound: Array.from(pageSet)
-        }));
-
-        sendEvent({ type: 'result', payload: {
-            uniqueCookies,
-            uniqueTrackers,
-            uniqueLocalStorage,
-            thirdPartyDomains,
-            pages: Array.from(visitedUrls).map(u => ({ url: u })),
-            compliance: complianceAnalysis,
-            screenshotBase64,
-            consentBannerDetected: consentBannerFound,
-            cookiePolicyDetected,
-            pagesScannedCount: visitedUrls.size,
-            googleConsentV2: googleConsentV2Status,
-            cmpProvider,
-        }});
 
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         console.error('[SERVER] Scan failed:', message);
-        sendEvent({ type: 'error', message: `Failed to scan ${url}. ${message}` });
+        console.error('[SERVER] API key present:', !!process.env.API_KEY);
+        
+        if (message.includes('API Key not found') || message.includes('Invalid API key')) {
+            sendEvent({ type: 'error', message: `API Key error: ${message}. Please check your Google AI API key configuration.` });
+        } else {
+            sendEvent({ type: 'error', message: `Failed to scan ${url}. ${message}` });
+        }
     } finally {
         if (browser) await browser.close();
         res.end();
     }
 });
 
+// ============================================================================
+// REMAINING API ROUTES (simplified for brevity)
+// ============================================================================
+
 app.post('/api/scan-vulnerabilities', async (req: Request, res: Response) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
     console.log(`[SERVER] Received vulnerability scan request for: ${url}`);
+    console.log(`[SERVER] API key status: ${!!process.env.API_KEY ? 'Present' : 'Missing'}`);
+    
     let browser: Browser | null = null;
     try {
         browser = await puppeteer.launch({
@@ -1143,7 +1380,12 @@ Focus on: Missing security headers, insecure cookies, unsafe external scripts, a
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         console.error('[SERVER] Vulnerability scan failed:', message);
-        res.status(500).json({ error: `Failed to scan ${url} for vulnerabilities. ${message}` });
+        
+        if (message.includes('API Key not found') || message.includes('Invalid API key')) {
+            res.status(500).json({ error: `API Key error: ${message}. Please check your Google AI API key configuration.` });
+        } else {
+            res.status(500).json({ error: `Failed to scan ${url} for vulnerabilities. ${message}` });
+        }
     } finally {
         if (browser) await browser.close();
     }
@@ -1160,6 +1402,7 @@ app.post('/api/analyze-legal-document', async (req: Request<{}, {}, LegalReviewB
 
     try {
         console.log(`[SERVER] Received legal analysis request (perspective: ${perspective}).`);
+        console.log(`[SERVER] API key status: ${!!process.env.API_KEY ? 'Present' : 'Missing'}`);
 
         const legalPrompt = `
 You are a world-class AI legal analyst. Your task is to perform a detailed risk analysis of the provided legal document from the perspective of a **${perspective}**.
@@ -1227,7 +1470,12 @@ Your final output must be a single, valid JSON object adhering to this structure
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         console.error('[SERVER] Legal analysis failed:', message);
-        res.status(500).json({ error: `Failed to analyze document. ${message}` });
+        
+        if (message.includes('API Key not found') || message.includes('Invalid API key')) {
+            res.status(500).json({ error: `API Key error: ${message}. Please check your Google AI API key configuration.` });
+        } else {
+            res.status(500).json({ error: `Failed to analyze document. ${message}` });
+        }
     }
 });
 
@@ -1272,6 +1520,8 @@ app.post('/api/generate-contract', async (req: Request<{}, {}, GenerateContractB
     if (!contractType || !details) return res.status(400).json({ error: 'Contract type and details are required.' });
 
     try {
+        console.log(`[SERVER] Generating contract. API key status: ${!!process.env.API_KEY ? 'Present' : 'Missing'}`);
+        
         let generationPrompt: string;
 
         if (templateContent) {
@@ -1345,7 +1595,12 @@ Return ONLY the valid JSON object.`;
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         console.error('[SERVER] Contract generation failed:', message);
-        res.status(500).json({ error: `Failed to generate contract. ${message}` });
+        
+        if (message.includes('API Key not found') || message.includes('Invalid API key')) {
+            res.status(500).json({ error: `API Key error: ${message}. Please check your Google AI API key configuration.` });
+        } else {
+            res.status(500).json({ error: `Failed to generate contract. ${message}` });
+        }
     }
 });
 
@@ -1362,6 +1617,8 @@ app.post('/api/chat-with-document', async (req: Request<{}, {}, ChatRequestBody>
 
     try {
         console.log('[AI] Answering/editing question about document...');
+        console.log(`[AI] API key status: ${!!process.env.API_KEY ? 'Present' : 'Missing'}`);
+        
         const prompt = `You are an interactive legal AI assistant. You can answer questions or perform edits on the provided document.
 
 **DOCUMENT TEXT:**
@@ -1407,7 +1664,12 @@ Your response must be a single, valid JSON object. Do not include any other text
     } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         console.error('[SERVER] Chat with document failed:', message);
-        res.status(500).json({ error: `Chat failed. ${message}` });
+        
+        if (message.includes('API Key not found') || message.includes('Invalid API key')) {
+            res.status(500).json({ error: `API Key error: ${message}. Please check your Google AI API key configuration.` });
+        } else {
+            res.status(500).json({ error: `Chat failed. ${message}` });
+        }
     }
 });
 
@@ -1441,6 +1703,13 @@ app.use((err: Error, req: Request, res: Response, next: Function) => {
     });
 });
 
+// ============================================================================
+// SERVER STARTUP
+// ============================================================================
+
+// Test API connection on startup (non-blocking)
+testApiConnection();
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('[SERVER] SIGTERM received, shutting down gracefully...');
@@ -1453,9 +1722,15 @@ process.on('SIGINT', () => {
 });
 
 app.listen(port, () => {
-    console.log(`[SERVER] Backend server running on port ${port}`);
-    console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`[SERVER] Health check available at: /health`);
-    console.log(`[SERVER] Debug routes available at: /debug-routes`);
-    console.log(`[SERVER] Static files served from: ${path.join(__dirname, '..', 'public')}`);
+    console.log('[STARTUP] ='.repeat(50));
+    console.log(`[STARTUP] 🚀 COOKIE CARE SERVER STARTED SUCCESSFULLY`);
+    console.log(`[STARTUP] 🌐 Server running on port: ${port}`);
+    console.log(`[STARTUP] 🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[STARTUP] 🔑 API Key status: ${!!process.env.API_KEY ? '✅ Present' : '❌ Missing'}`);
+    console.log(`[STARTUP] 🏥 Health check: /health`);
+    console.log(`[STARTUP] 🐛 Debug routes: /debug-routes`);
+    console.log(`[STARTUP] 🔍 API status: /debug-api-status`);
+    console.log(`[STARTUP] 🧪 Test API key: /test-api-key`);
+    console.log(`[STARTUP] 📁 Static files: ${path.join(__dirname, '..', 'public')}`);
+    console.log('[STARTUP] ='.repeat(50));
 });
