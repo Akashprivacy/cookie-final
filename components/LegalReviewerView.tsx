@@ -1,3 +1,5 @@
+
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import type { LegalAnalysisResult, LegalPerspective, GeneratedContract, ContractTemplate } from '../types';
 import { ScanningProgress } from './ScanningProgress';
@@ -22,18 +24,6 @@ type ViewMode = 'analyze' | 'generate' | 'templates';
 
 // --- Contract Generation Form Component ---
 
-const governingLawOptions = [
-    'GDPR (EU)',
-    'CCPA/CPRA (California, USA)',
-    'DPDP (India)',
-    'PIPEDA (Canada)',
-    'Delaware (USA)',
-    'California (USA)',
-    'New York (USA)',
-    'England and Wales',
-    'Ireland',
-];
-
 const contractFieldsConfig: Record<string, Record<string, any>> = {
   'Non-Disclosure Agreement (NDA)': {
     disclosingParty: { label: 'Disclosing Party', type: 'text', placeholder: 'e.g., ACME Corporation' },
@@ -41,7 +31,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     effectiveDate: { label: 'Effective Date', type: 'date' },
     term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., 2 years from Effective Date' },
     purpose: { label: 'Purpose of Disclosure', type: 'textarea', placeholder: 'To evaluate a potential business relationship.' },
-    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+    governingLaw: { label: 'Governing Law / Regulation', type: 'select', options: ['GDPR (EU)', 'CCPA / CPRA (California)', 'DPDA (India)', 'Delaware (USA)', 'New York (USA)', 'California (USA)'] },
   },
   'Consulting Agreement': {
     consultantName: { label: 'Consultant Name', type: 'text', placeholder: 'e.g., Jane Doe' },
@@ -49,7 +39,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     services: { label: 'Description of Services', type: 'textarea', placeholder: 'Provide a detailed description of the consulting services to be rendered.' },
     term: { label: 'Term of Agreement', type: 'text', placeholder: 'e.g., From Start Date until project completion' },
     compensation: { label: 'Compensation', type: 'text', placeholder: 'e.g., $150 per hour, invoiced monthly' },
-    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+    governingLaw: { label: 'Governing Law / Regulation', type: 'select', options: ['GDPR (EU)', 'CCPA / CPRA (California)', 'DPDA (India)', 'Delaware (USA)', 'New York (USA)', 'California (USA)'] },
   },
   'Service Agreement': {
     providerName: { label: 'Service Provider', type: 'text', placeholder: 'e.g., Tech Solutions LLC' },
@@ -57,7 +47,7 @@ const contractFieldsConfig: Record<string, Record<string, any>> = {
     services: { label: 'Scope of Services', type: 'textarea', placeholder: 'Clearly define the services, deliverables, and any performance metrics.' },
     term: { label: 'Agreement Term', type: 'text', placeholder: 'e.g., 1 year, auto-renewing monthly' },
     paymentTerms: { label: 'Payment Terms', type: 'textarea', placeholder: 'e.g., Net 30 days upon receipt of monthly invoice.' },
-    governingLaw: { label: 'Governing Law / Jurisdiction', type: 'select', options: governingLawOptions },
+    governingLaw: { label: 'Governing Law / Regulation', type: 'select', options: ['GDPR (EU)', 'CCPA / CPRA (California)', 'DPDA (India)', 'Delaware (USA)', 'New York (USA)', 'California (USA)'] },
   },
 };
 
@@ -372,16 +362,19 @@ export const LegalReviewerView: React.FC = () => {
                                 </select>
                             </div>
 
-                            {selectedTemplateId === 'none' && (
-                                <div>
-                                    <label htmlFor="contract-type" className="block text-sm font-medium text-[var(--text-primary)]">Contract Type</label>
-                                    <select id="contract-type" value={contractType} onChange={e => setContractType(e.target.value)} disabled={isLoading} className="mt-1 block w-full py-2 px-3 border border-[var(--border-primary)] bg-[var(--bg-primary)] rounded-md shadow-sm focus:outline-none focus:ring-brand-blue focus:border-brand-blue sm:text-sm">
-                                        <option>Non-Disclosure Agreement (NDA)</option>
-                                        <option>Consulting Agreement</option>
-                                        <option>Service Agreement</option>
-                                    </select>
-                                </div>
-                            )}
+                            <div>
+                                <label htmlFor="contract-type" className="block text-sm font-medium text-[var(--text-primary)]">Contract Type</label>
+                                <p className="text-xs text-[var(--text-primary)]/80 mb-1">
+                                    {selectedTemplateId === 'none' 
+                                        ? 'Select a standard contract type to generate from scratch.'
+                                        : 'Classify your selected template to show relevant fields.'}
+                                </p>
+                                <select id="contract-type" value={contractType} onChange={e => setContractType(e.target.value)} disabled={isLoading} className="mt-1 block w-full py-2 px-3 border border-[var(--border-primary)] bg-[var(--bg-primary)] rounded-md shadow-sm focus:outline-none focus:ring-brand-blue focus:border-brand-blue sm:text-sm">
+                                    <option>Non-Disclosure Agreement (NDA)</option>
+                                    <option>Consulting Agreement</option>
+                                    <option>Service Agreement</option>
+                                </select>
+                            </div>
                             
                            <ContractDetailsForm
                                 contractType={contractType}
@@ -406,7 +399,7 @@ export const LegalReviewerView: React.FC = () => {
             </div>
 
             <div className="mt-12">
-                {isLoading && <ScanningProgress steps={legalReviewSteps} />}
+                {isLoading && <ScanningProgress logs={legalReviewSteps.map(s => s.message)} />}
                 {error && (
                     <div className="max-w-4xl mx-auto bg-red-50 dark:bg-red-900/20 border border-red-500/30 text-red-700 dark:text-red-300 p-4 rounded-lg flex items-start space-x-4" role="alert">
                         <AlertTriangleIcon className="h-6 w-6 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
@@ -420,7 +413,7 @@ export const LegalReviewerView: React.FC = () => {
                 {generatedContract && !isLoading && (
                     <div className="max-w-4xl mx-auto bg-[var(--bg-secondary)] p-6 rounded-xl border border-[var(--border-primary)] shadow-sm animate-fade-in-up">
                         <h3 className="text-2xl font-bold text-[var(--text-headings)] mb-4">{generatedContract.title}</h3>
-                        <div className="font-sans text-sm bg-[var(--bg-primary)] p-6 rounded-lg border border-[var(--border-primary)] max-h-[60vh] overflow-y-auto prose prose-sm dark:prose-invert max-w-none" 
+                        <div className="font-sans text-sm bg-[var(--bg-primary)] p-6 rounded-lg border border-[var(--border-primary)] max-h-[60vh] overflow-y-auto generated-content" 
                             dangerouslySetInnerHTML={{ __html: generatedContract.content }}>
                         </div>
                         <div className="flex items-center gap-4 mt-6">
