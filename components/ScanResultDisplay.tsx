@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useRef } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -78,7 +79,7 @@ const DetailsModal: React.FC<{ item: CookieInfo | TrackerInfo | LocalStorageInfo
     } else {
       title = item.hostname;
       icon = <TagInventoryIcon className="h-6 w-6 text-brand-blue" />;
-    } 
+    }
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-up" onClick={onClose}>
@@ -101,15 +102,15 @@ const DetailsModal: React.FC<{ item: CookieInfo | TrackerInfo | LocalStorageInfo
                             <p>{item.category}</p>
                         </div>
                     </div>
-                     {isCookie && (item.databaseClassification || item.oneTrustClassification) && (
+                     {('databaseClassification' in item && item.databaseClassification || 'oneTrustClassification' in item && item.oneTrustClassification) && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                            {item.databaseClassification && 
+                            {'databaseClassification' in item && item.databaseClassification && 
                                 <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
                                     <p className="font-semibold text-[var(--text-headings)]">DB Classification</p>
                                     <p>{item.databaseClassification}</p>
                                 </div>
                             }
-                            {item.oneTrustClassification &&
+                            {'oneTrustClassification' in item && item.oneTrustClassification &&
                                  <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
                                     <p className="font-semibold text-[var(--text-headings)]">OneTrust Category</p>
                                     <p>{item.oneTrustClassification}</p>
@@ -364,14 +365,14 @@ export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: s
              pdf.text(`AI Category: ${item.category} | Status: ${status}`, margin, yPos);
              yPos += 5;
 
-             if (type === 'Cookie') {
-                const cookieItem = item as CookieInfo;
-                if (cookieItem.databaseClassification) {
-                    pdf.text(`DB Category: ${cookieItem.databaseClassification}`, margin, yPos);
+             if (type === 'Cookie' || type === 'Tracker') {
+                const classifiedItem = item as CookieInfo | TrackerInfo;
+                if (classifiedItem.databaseClassification) {
+                    pdf.text(`DB Category: ${classifiedItem.databaseClassification}`, margin, yPos);
                     yPos += 5;
                 }
-                if (cookieItem.oneTrustClassification) {
-                    pdf.text(`OneTrust Category: ${cookieItem.oneTrustClassification}`, margin, yPos);
+                if (classifiedItem.oneTrustClassification) {
+                    pdf.text(`OneTrust Category: ${classifiedItem.oneTrustClassification}`, margin, yPos);
                     yPos += 5;
                 }
             }
@@ -546,7 +547,8 @@ export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: s
                 <h3 className="text-lg font-bold text-[var(--text-headings)] mb-4">Cookie Categories</h3>
                  <ResponsiveContainer width="100%" height={250}>
                     <PieChart>
-                        <Pie data={cookieCategoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} labelLine={false} label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+                        {/* FIX: Explicitly type the label renderer's props to any to resolve Recharts TypeScript errors. */}
+                        <Pie data={cookieCategoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={50} labelLine={false} label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
                             const radius = innerRadius + (outerRadius - innerRadius) * 1.2;
                             const x = cx + radius * Math.cos(-midAngle * Math.PI / 180);
                             const y = cy + radius * Math.sin(-midAngle * Math.PI / 180);
@@ -613,7 +615,12 @@ export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: s
                         )}
                         {activeTab === 'trackers' && (
                              <tr className="text-left text-xs font-semibold text-[var(--text-primary)] uppercase">
-                                <th className="px-6 py-3">Tracker Hostname</th><th className="px-6 py-3">Category</th><th className="px-6 py-3">Compliance Status</th><th className="px-6 py-3">Pages Found</th>
+                                <th className="px-6 py-3">Tracker URL</th>
+                                <th className="px-6 py-3">AI Category</th>
+                                <th className="px-6 py-3">DB Category</th>
+                                <th className="px-6 py-3">OneTrust Category</th>
+                                <th className="px-6 py-3">Compliance Status</th>
+                                <th className="px-6 py-3">Pages Found</th>
                             </tr>
                         )}
                         {activeTab === 'storage' && (
@@ -644,8 +651,8 @@ export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: s
                                         <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{ name }</td>
                                         <td className="px-6 py-4 text-sm">{issue.itemType}</td>
                                         <td className="px-6 py-4 text-sm">{issue.category}</td>
-                                        <td className="px-6 py-4 text-sm">{issue.itemType === 'Cookie' ? (issue as CookieInfo).databaseClassification || 'N/A' : 'N/A'}</td>
-                                        <td className="px-6 py-4 text-sm">{issue.itemType === 'Cookie' ? (issue as CookieInfo).oneTrustClassification || 'N/A' : 'N/A'}</td>
+                                        <td className="px-6 py-4 text-sm">{(issue as CookieInfo | TrackerInfo).databaseClassification || 'N/A'}</td>
+                                        <td className="px-6 py-4 text-sm">{(issue as CookieInfo | TrackerInfo).oneTrustClassification || 'N/A'}</td>
                                         <td className={`px-6 py-4 text-sm font-medium ${text}`}>{issue.complianceStatus}</td>
                                         <td className="px-6 py-4 text-sm text-center">{issue.pagesFound.length}</td>
                                     </tr>
@@ -679,8 +686,10 @@ export const ScanResultDisplay: React.FC<{ result: ScanResultData; scannedUrl: s
                                 const { text } = getComplianceStyle(tracker.complianceStatus);
                                 return (
                                     <tr key={tracker.key} onClick={() => setSelectedItem(tracker)} className="hover:bg-[var(--bg-tertiary)] cursor-pointer">
-                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)]">{tracker.hostname}</td>
+                                        <td className="px-6 py-4 text-sm font-semibold text-[var(--text-headings)] max-w-sm truncate" title={tracker.key}>{tracker.key}</td>
                                         <td className="px-6 py-4 text-sm">{tracker.category}</td>
+                                        <td className="px-6 py-4 text-sm">{tracker.databaseClassification || 'N/A'}</td>
+                                        <td className="px-6 py-4 text-sm">{tracker.oneTrustClassification || 'N/A'}</td>
                                         <td className={`px-6 py-4 text-sm font-medium ${text}`}>{tracker.complianceStatus}</td>
                                         <td className="px-6 py-4 text-sm text-center">{tracker.pagesFound.length}</td>
                                     </tr>
