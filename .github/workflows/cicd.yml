@@ -1,4 +1,3 @@
-
 name: 'Build and Deploy to Cloud Run with Rollback'
 on:
   push:
@@ -27,9 +26,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
         
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
       - name: Docker Auth
         run: gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev --quiet
         
@@ -45,28 +41,33 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           
       - name: Build and Push Container
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            ${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}:${{ github.run_number }}-${{ github.sha }}
-            ${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}:latest
-            
-      - name: Set Image Variables
         run: |
           IMAGE_BASE="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}"
-          IMAGE_TAG="${IMAGE_BASE}:${{ github.run_number }}-${{ github.sha }}"
+          
+          # Use timestamp + short SHA for unique tagging
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          IMAGE_TAG="${IMAGE_BASE}:${TIMESTAMP}-${SHORT_SHA}"
           IMAGE_LATEST="${IMAGE_BASE}:latest"
           
+          echo "🔨 Building image with unique tag: $IMAGE_TAG"
+          echo "📦 Also tagging as latest: $IMAGE_LATEST"
+          
+          # Force rebuild without cache to ensure fresh build
+          docker build \
+            --no-cache \
+            --platform linux/amd64 \
+            -t "$IMAGE_TAG" \
+            -t "$IMAGE_LATEST" \
+            .
+          
+          echo "🚀 Pushing images..."
+          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_LATEST"
+          
+          # Use the unique tag for deployment (not latest)
           echo "IMAGE_TO_DEPLOY=$IMAGE_TAG" >> $GITHUB_ENV
           echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
-          
-          echo "🔨 Built image: $IMAGE_TAG"
-          echo "📦 Tagged as latest: $IMAGE_LATEST"
           
           # Verify images were pushed
           echo "🔍 Verifying image was pushed..."
@@ -86,9 +87,9 @@ jobs:
             --allow-unauthenticated \
             --port=8080 \
             --memory=2Gi \
-            --cpu=2 \
+            --cpu=1 \
             --timeout=900 \
-            --concurrency=10 \
+            --concurrency=15 \
             --min-instances=0 \
             --max-instances=10 \
             --set-env-vars="NODE_ENV=production,API_KEY=${{ secrets.API_KEY }}" \
@@ -143,33 +144,27 @@ jobs:
         run: |
           echo "🔑 Testing API key in deployed service..."
           
-          # Run health check and API verification in parallel
-          curl -s "$SERVICE_URL/debug-api-status" > /tmp/api.json &
-          API_PID=$!
+          # Test the debug endpoint
+          API_STATUS=$(curl -s "$SERVICE_URL/debug-api-status" | jq -r '.apiKeyPresent // false')
           
-          curl -s "$SERVICE_URL/test-api-key" > /tmp/test.json &
-          TEST_PID=$!
-          
-          wait $API_PID $TEST_PID
-          
-          # Check API key presence
-          API_STATUS=$(jq -r '.apiKeyPresent // false' /tmp/api.json)
           if [ "$API_STATUS" = "true" ]; then
             echo "✅ API key is present in deployed service"
           else
             echo "❌ API key is missing in deployed service"
             echo "🔍 Debug info:"
-            cat /tmp/api.json | jq .
+            curl -s "$SERVICE_URL/debug-api-status" | jq .
             exit 1
           fi
           
-          # Check API functionality
-          API_TEST=$(jq -r '.success // false' /tmp/test.json)
+          # Test actual API functionality
+          echo "🧪 Testing API functionality..."
+          API_TEST=$(curl -s "$SERVICE_URL/test-api-key" | jq -r '.success // false')
+          
           if [ "$API_TEST" = "true" ]; then
             echo "✅ API key is working correctly"
           else
             echo "❌ API key test failed"
-            cat /tmp/test.json | jq .
+            curl -s "$SERVICE_URL/test-api-key" | jq .
           fi
           
       - name: Rollback if Deployment Fails
@@ -211,15 +206,6 @@ jobs:
           # Test a scan to make sure everything works
           echo "🔍 Testing scan functionality..."
           curl -s "$SERVICE_URL/health" | jq .
-          
-      - name: Cleanup Docker Images
-        if: steps.deploy.outcome == 'success'
-        continue-on-error: true
-        run: |
-          echo "🧹 Cleaning up old Docker images per policy..."
-          gcloud artifacts repositories cleanup ${{ env.REPO_NAME }} \
-            --location=${{ env.AR_REGION }} \
-            --quiet
           
       - name: Cleanup Old Revisions
         if: steps.deploy.outcome == 'success'
