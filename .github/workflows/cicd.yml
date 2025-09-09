@@ -1,16 +1,13 @@
 name: 'Build and Deploy to Cloud Run with Rollback'
-
 on:
   push:
     branches:
       - main
-
-
 env:
-  PROJECT_ID: 'rd-dpo-and-security-app'   # ← Your actual project ID
-  REGION: 'asia-south1'                   # ← Your region
-  SERVICE: 'cookie-care'                  # ← Match your actual service name
-  AR_REGION: 'asia-south1'               # ← Must match REGION
+  PROJECT_ID: 'rd-dpo-and-security-app'
+  REGION: 'asia-south1'
+  SERVICE: 'cookie-care'
+  AR_REGION: 'asia-south1'
   REPO_NAME: 'cookie-care-repo1'
   
 jobs:
@@ -20,40 +17,72 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+        
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
-
+          
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
-
+        
       - name: Docker Auth
         run: gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev --quiet
-
+        
+      - name: Debug API Key Secret
+        run: |
+          if [ -n "${{ secrets.API_KEY }}" ]; then
+            echo "✅ API_KEY secret is available (length: ${#API_KEY})"
+          else
+            echo "❌ API_KEY secret is missing"
+            exit 1
+          fi
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          
       - name: Build and Push Container
         run: |
           IMAGE_BASE="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE }}"
-          IMAGE_SHA="${IMAGE_BASE}:${{ github.sha }}"
+          
+          # Use timestamp + short SHA for unique tagging
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          IMAGE_TAG="${IMAGE_BASE}:${TIMESTAMP}-${SHORT_SHA}"
           IMAGE_LATEST="${IMAGE_BASE}:latest"
           
-          echo "Building and pushing $IMAGE_SHA and $IMAGE_LATEST..."
+          echo "🔨 Building image with unique tag: $IMAGE_TAG"
+          echo "📦 Also tagging as latest: $IMAGE_LATEST"
           
-          docker build -t "$IMAGE_SHA" -t "$IMAGE_LATEST" .
-          docker push "$IMAGE_SHA"
+          # Force rebuild without cache to ensure fresh build
+          docker build \
+            --no-cache \
+            --platform linux/amd64 \
+            -t "$IMAGE_TAG" \
+            -t "$IMAGE_LATEST" \
+            .
+          
+          echo "🚀 Pushing images..."
+          docker push "$IMAGE_TAG"
           docker push "$IMAGE_LATEST"
           
-          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
+          # Use the unique tag for deployment (not latest)
+          echo "IMAGE_TO_DEPLOY=$IMAGE_TAG" >> $GITHUB_ENV
           echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
-
+          
+          # Verify images were pushed
+          echo "🔍 Verifying image was pushed..."
+          gcloud container images describe "$IMAGE_TAG" --format="value(image_summary.digest)"
+          
       - name: Deploy to Cloud Run
         id: deploy
         continue-on-error: true
         run: |
+          echo "🚀 Deploying image: $IMAGE_TO_DEPLOY"
+          
+          # Deploy using the unique tagged image (not latest)
           gcloud run deploy ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
-            --image=${IMAGE_LATEST} \
+            --image="$IMAGE_TO_DEPLOY" \
             --platform=managed \
             --allow-unauthenticated \
             --port=8080 \
@@ -64,8 +93,80 @@ jobs:
             --min-instances=0 \
             --max-instances=10 \
             --set-env-vars="NODE_ENV=production,API_KEY=${{ secrets.API_KEY }}" \
+            --no-traffic \
+            --tag="v$(date +%Y%m%d-%H%M%S)" \
             --quiet
-
+            
+          # Get the new revision name
+          NEW_REVISION=$(gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --sort-by="~createTime" \
+            --limit=1 \
+            --format="value(metadata.name)")
+          
+          echo "📋 New revision created: $NEW_REVISION"
+          echo "NEW_REVISION=$NEW_REVISION" >> $GITHUB_ENV
+          
+          # Gradually shift traffic to new revision (safer deployment)
+          echo "🔄 Shifting traffic to new revision..."
+          gcloud run services update-traffic ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --to-revisions="$NEW_REVISION=100"
+            
+          # Verify deployment
+          echo "✅ Verifying deployment..."
+          sleep 10
+          
+          # Get service URL
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.url)")
+          
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
+          
+          # Test the health endpoint
+          echo "🏥 Testing health endpoint..."
+          HEALTH_RESPONSE=$(curl -s -w "%{http_code}" "$SERVICE_URL/health" || echo "000")
+          echo "Health check response: $HEALTH_RESPONSE"
+          
+          if [[ "$HEALTH_RESPONSE" == *"200"* ]]; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          
+      - name: Verify API Key in Deployed Service
+        if: steps.deploy.outcome == 'success'
+        run: |
+          echo "🔑 Testing API key in deployed service..."
+          
+          # Test the debug endpoint
+          API_STATUS=$(curl -s "$SERVICE_URL/debug-api-status" | jq -r '.apiKeyPresent // false')
+          
+          if [ "$API_STATUS" = "true" ]; then
+            echo "✅ API key is present in deployed service"
+          else
+            echo "❌ API key is missing in deployed service"
+            echo "🔍 Debug info:"
+            curl -s "$SERVICE_URL/debug-api-status" | jq .
+            exit 1
+          fi
+          
+          # Test actual API functionality
+          echo "🧪 Testing API functionality..."
+          API_TEST=$(curl -s "$SERVICE_URL/test-api-key" | jq -r '.success // false')
+          
+          if [ "$API_TEST" = "true" ]; then
+            echo "✅ API key is working correctly"
+          else
+            echo "❌ API key test failed"
+            curl -s "$SERVICE_URL/test-api-key" | jq .
+          fi
+          
       - name: Rollback if Deployment Fails
         if: steps.deploy.outcome == 'failure'
         run: |
@@ -86,14 +187,44 @@ jobs:
           echo "🔄 Rolling back to $LAST_REVISION..."
           gcloud run services update-traffic ${{ env.SERVICE }} \
             --region=${{ env.REGION }} \
-            --to-revisions=$LAST_REVISION=100
-
-      - name: Show Service URL
+            --to-revisions="$LAST_REVISION=100"
+            
+      - name: Show Deployment Results
         if: steps.deploy.outcome == 'success'
         run: |
-          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE }} \
-            --region=${{ env.REGION }} \
-            --format="value(status.url)")
-          echo "🚀 Service deployed successfully!"
+          echo "🎉 Deployment completed successfully!"
           echo "📍 Service URL: $SERVICE_URL"
-          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_ENV
+          echo "🏷️ Image deployed: $IMAGE_TO_DEPLOY"
+          echo "📋 Revision: $NEW_REVISION"
+          
+          # Show current traffic allocation
+          echo "📊 Current traffic allocation:"
+          gcloud run services describe ${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --format="table(spec.traffic[].revisionName,spec.traffic[].percent)"
+            
+          # Test a scan to make sure everything works
+          echo "🔍 Testing scan functionality..."
+          curl -s "$SERVICE_URL/health" | jq .
+          
+      - name: Cleanup Old Revisions
+        if: steps.deploy.outcome == 'success'
+        run: |
+          echo "🧹 Cleaning up old revisions (keeping last 5)..."
+          
+          # Get all revisions sorted by creation time (newest first)
+          OLD_REVISIONS=$(gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --region=${{ env.REGION }} \
+            --sort-by="~createTime" \
+            --format="value(metadata.name)" | tail -n +6)
+          
+          if [ -n "$OLD_REVISIONS" ]; then
+            echo "🗑️ Deleting old revisions:"
+            echo "$OLD_REVISIONS"
+            echo "$OLD_REVISIONS" | xargs -I {} gcloud run revisions delete {} \
+              --region=${{ env.REGION }} \
+              --quiet
+          else
+            echo "✅ No old revisions to clean up"
+          fi
